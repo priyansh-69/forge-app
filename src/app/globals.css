@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+/* ============================================================
+   FORGE — Design System
+   Dark-first. Mobile-first. Premium feel.
+   ============================================================ */
+
+:root {
+  /* Surface colors — dark theme */
+  --bg-primary: #0b0d10;
+  --bg-secondary: #141820;
+  --bg-tertiary: #1c2130;
+  --bg-elevated: #242938;
+
+  /* Text colors */
+  --text-primary: #f0f2f5;
+  --text-secondary: #8b92a5;
+  --text-muted: #555d72;
+
+  /* Brand — FORGE orange/amber */
+  --brand-primary: #f59e0b;
+  --brand-primary-hover: #d97706;
+  --brand-glow: rgba(245, 158, 11, 0.15);
+
+  /* Coach modes */
+  --mode-elevate: #22c55e;
+  --mode-nudge: #eab308;
+  --mode-truth: #ef4444;
+
+  /* Borders */
+  --border-default: #1e2536;
+  --border-subtle: #161b28;
+
+  /* Misc */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+  --shadow-glow: 0 0 20px var(--brand-glow);
+
+  /* Safe area for mobile */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --nav-height: 72px;
+  --header-height: 56px;
+}
+
+@theme inline {
+  --color-background: var(--bg-primary);
+  --color-foreground: var(--text-primary);
+  --font-sans: system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* ============================================================
+   Base Resets
+   ============================================================ */
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior-y: contain;
+}
+
+/* ============================================================
+   Scrollbar — Minimal
+   ============================================================ */
+
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: var(--radius-full);
+}
+
+/* ============================================================
+   Utility Classes
+   ============================================================ */
+
+.glass {
+  background: rgba(20, 24, 32, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-default);
+}
+
+.glow-brand {
+  box-shadow: var(--shadow-glow);
+}
+
+/* Pulse animation for recording */
+@keyframes pulse-record {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.85;
+  }
+}
+
+.animate-pulse-record {
+  animation: pulse-record 1.5s ease-in-out infinite;
+}
+
+/* Fade in animation */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
