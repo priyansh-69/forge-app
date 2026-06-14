@@ -60,7 +60,8 @@ export const useUserStore = create<UserState>((set) => ({
     setStorageItem("forge_voice_tone_analysis", voiceToneAnalysis);
   },
   fetchProfile: async (userId) => {
-    set({ loading: true });
+    // Only set loading to true if we don't have a profile yet (prevents infinite render loops)
+    set((state) => ({ loading: !state.profile }));
     try {
       const { data, error } = await supabase
         .from("profiles")

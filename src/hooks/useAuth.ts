@@ -1,53 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useUserStore } from "@/stores/useUserStore";
 
 const supabase = createClient();
 
 export function useAuth() {
-  const { user, profile, loading, setUser, fetchProfile, clear } = useUserStore();
+  const { user, profile, loading, clear } = useUserStore();
   const [authError, setAuthError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    // Check active session on mount
-    const checkSession = async () => {
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        if (error) throw error;
-
-        if (session?.user) {
-          setUser(session.user);
-          await fetchProfile(session.user.id);
-        } else {
-          clear();
-        }
-      } catch (err: any) {
-        console.error("Error checking session:", err);
-        clear();
-      }
-    };
-
-    checkSession();
-
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (session?.user) {
-          setUser(session.user);
-          await fetchProfile(session.user.id);
-        } else {
-          clear();
-        }
-      }
-    );
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [setUser, fetchProfile, clear]);
 
   // Sign up new user
   const signUp = async (email: string, password: string, displayName: string) => {
@@ -67,7 +29,8 @@ export function useAuth() {
       if (error) throw error;
       return data;
     } catch (err: any) {
-      setAuthError(err.message || "An error occurred during sign up.");
+      const errMsg = err.message || "An error occurred during sign up.";
+      setAuthError(errMsg);
       throw err;
     } finally {
       setSubmitting(false);
@@ -87,7 +50,8 @@ export function useAuth() {
       if (error) throw error;
       return data;
     } catch (err: any) {
-      setAuthError(err.message || "An error occurred during sign in.");
+      const errMsg = err.message || "An error occurred during sign in.";
+      setAuthError(errMsg);
       throw err;
     } finally {
       setSubmitting(false);
@@ -103,7 +67,8 @@ export function useAuth() {
       if (error) throw error;
       clear();
     } catch (err: any) {
-      setAuthError(err.message || "An error occurred during sign out.");
+      const errMsg = err.message || "An error occurred during sign out.";
+      setAuthError(errMsg);
       throw err;
     } finally {
       setSubmitting(false);
