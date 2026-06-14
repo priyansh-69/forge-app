@@ -1,45 +1,121 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
 import { APP } from "@/lib/constants";
+import { useAuth } from "@/hooks/useAuth";
+import { useUserStore } from "@/stores/useUserStore";
+import { createClient } from "@/lib/supabase/client";
 
 // ============================================================
 // Settings Page — Account settings, coaching mode, and PWA options
 // ============================================================
 
-export default function SettingsPage() {
-  const [coachIntensity, setCoachIntensity] = useState<"standard" | "harsh" | "silent">("standard");
-  const [notifications, setNotifications] = useState(true);
-  const [voiceToneAnalysis, setVoiceToneAnalysis] = useState(true);
+const supabase = createClient();
 
-  const handleExportData = () => {
-    alert("Exporting your profile, journal entries, and points logs as JSON. Check your downloads!");
-    const mockData = {
-      profile: { displayName: "Forge User", currentStreak: 0, totalPoints: 0 },
-      entries: [],
-      pointsLog: []
-    };
-    const blob = new Blob([JSON.stringify(mockData, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "forge_backup_data.json";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+export default function SettingsPage() {
+  const router = useRouter();
+  const { signOut } = useAuth();
+  const {
+    user,
+    profile,
+    coachIntensity,
+    notifications,
+    voiceToneAnalysis,
+    setCoachIntensity,
+    setNotifications,
+    setVoiceToneAnalysis,
+  } = useUserStore();
+
+  const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleExportData = async () => {
+    if (!user) return;
+    setExporting(true);
+    try {
+      // Query database tables for this user's data
+      const [
+        { data: profileData },
+        { data: entriesData },
+        { data: pointsData },
+        { data: habitsData },
+      ] = await Promise.all([
+        supabase.from("profiles").select("*").eq("id", user.id).single(),
+        supabase.from("entries").select("*").eq("user_id", user.id),
+        supabase.from("points_log").select("*").eq("user_id", user.id),
+        supabase.from("habits").select("*").eq("user_id", user.id),
+      ]);
+
+      const backup = {
+        profile: profileData || profile || {},
+        entries: entriesData || [],
+        points: pointsData || [],
+        habits: habitsData || [],
+        exportedAt: new Date().toISOString(),
+      };
+
+      const blob = new Blob([JSON.stringify(backup, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `forge_backup_data_${new Date().toISOString().split("T")[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert("Failed to export data: " + err.message);
+    } finally {
+      setExporting(false);
+    }
   };
 
-  const handleDeleteAccount = () => {
+  const handleDeleteAccount = async () => {
+    if (!user) return;
     const confirmDelete = confirm(
-      "WARNING: This action is permanent and cannot be undone. You will lose all your progress, streak, and entries. Are you sure you want to delete your account?"
+      "WARNING: This action is permanent and cannot be undone. You will lose all your progress, streaks, entries, and habit records. Are you sure you want to permanently erase your FORGE profile?"
     );
-    if (confirmDelete) {
-      alert("Account deletion simulated.");
+    if (!confirmDelete) return;
+
+    setDeleting(true);
+    try {
+      // Cascade delete: deleting profile will delete all user logs due to cascades in DB
+      const { error } = await supabase.from("profiles").delete().eq("id", user.id);
+      if (error) throw error;
+
+      await signOut();
+      router.push("/login");
+    } catch (err: any) {
+      alert("Failed to delete account: " + err.message);
+    } finally {
+      setDeleting(false);
     }
+  };
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await signOut();
+      router.push("/login");
+    } catch (err: any) {
+      alert("Failed to log out: " + err.message);
+      setLoggingOut(false);
+    }
+  };
+
+  const formatJoinDate = (dateStr?: string) => {
+    if (!dateStr) return "Member since June 2026";
+    const date = new Date(dateStr);
+    return `Member since ${date.toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+    })}`;
   };
 
   return (
@@ -54,17 +130,26 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      {/* User profile stub */}
+      {/* User profile card */}
       <Card className="flex items-center gap-4">
         <div className="h-12 w-12 rounded-full bg-[var(--bg-elevated)] border border-[var(--border-default)] flex items-center justify-center text-xl">
-          👤
+          {profile?.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={profile.avatarUrl}
+              alt="Avatar"
+              className="h-full w-full rounded-full object-cover"
+            />
+          ) : (
+            "👤"
+          )}
         </div>
         <div>
           <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-            Forge User
+            {profile?.displayName || user?.email || "Forge User"}
           </h3>
           <p className="text-xs text-[var(--text-secondary)]">
-            Member since June 2026
+            {formatJoinDate(profile?.createdAt || user?.created_at)}
           </p>
         </div>
       </Card>
@@ -123,7 +208,7 @@ export default function SettingsPage() {
               </p>
             </div>
             <button
-              onClick={() => setNotifications((prev) => !prev)}
+              onClick={() => setNotifications(!notifications)}
               className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
                 notifications ? "bg-[var(--brand-primary)]" : "bg-[var(--bg-elevated)]"
               }`}
@@ -147,7 +232,7 @@ export default function SettingsPage() {
               </p>
             </div>
             <button
-              onClick={() => setVoiceToneAnalysis((prev) => !prev)}
+              onClick={() => setVoiceToneAnalysis(!voiceToneAnalysis)}
               className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
                 voiceToneAnalysis ? "bg-[var(--brand-primary)]" : "bg-[var(--bg-elevated)]"
               }`}
@@ -168,6 +253,7 @@ export default function SettingsPage() {
           Account & Data
         </h3>
         <Card className="space-y-3">
+          {/* Export */}
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-sm font-medium text-[var(--text-primary)]">
@@ -177,11 +263,38 @@ export default function SettingsPage() {
                 Download all recorded check-ins and metrics
               </p>
             </div>
-            <Button variant="ghost" size="sm" onClick={handleExportData}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleExportData}
+              isLoading={exporting}
+            >
               Export
             </Button>
           </div>
 
+          {/* Logout */}
+          <div className="border-t border-[var(--border-default)] pt-3 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-[var(--text-primary)]">
+                Log Out
+              </p>
+              <p className="text-xs text-[var(--text-secondary)]">
+                Sign out of this device securely
+              </p>
+            </div>
+            <Button
+              variant="danger"
+              size="sm"
+              className="bg-orange-500/10 text-orange-400 border border-orange-500/20 hover:bg-orange-500/20"
+              onClick={handleLogout}
+              isLoading={loggingOut}
+            >
+              Logout
+            </Button>
+          </div>
+
+          {/* Delete Account */}
           <div className="border-t border-[var(--border-default)] pt-3 flex items-center justify-between gap-4">
             <div>
               <p className="text-sm font-medium text-[var(--text-primary)]">
@@ -191,7 +304,12 @@ export default function SettingsPage() {
                 Permanently erase your FORGE profile
               </p>
             </div>
-            <Button variant="danger" size="sm" onClick={handleDeleteAccount}>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleDeleteAccount}
+              isLoading={deleting}
+            >
               Delete
             </Button>
           </div>
