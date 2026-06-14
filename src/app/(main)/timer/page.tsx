@@ -12,9 +12,9 @@ import { formatTimer } from "@/lib/utils";
 // Timer Page — Pomodoro & Focus session timer
 // ============================================================
 
-type TimerMode = "focus" | "short" | "long";
+type TimerMode = "focus" | "short" | "long" | "custom";
 
-const MODE_CONFIG = {
+const MODE_CONFIG: Record<TimerMode, { label: string; duration: number; color: string; badgeColor: "points" | "elevate" | "default" }> = {
   focus: {
     label: "Focus",
     duration: TIMER.FOCUS_DURATION,
@@ -30,19 +30,26 @@ const MODE_CONFIG = {
   long: {
     label: "Long Break",
     duration: TIMER.LONG_BREAK,
-    color: "var(--brand-primary)", // or custom color
+    color: "var(--brand-primary)",
     badgeColor: "default",
   },
-} as const;
+  custom: {
+    label: "Custom",
+    duration: 1500, // 25 mins default
+    color: "var(--brand-secondary, #6366f1)",
+    badgeColor: "default",
+  },
+};
 
 export default function TimerPage() {
   const [mode, setMode] = useState<TimerMode>("focus");
+  const [customMinutes, setCustomMinutes] = useState("25");
   const [timeLeft, setTimeLeft] = useState(MODE_CONFIG.focus.duration);
   const [isActive, setIsActive] = useState(false);
   const [sessionsCompleted, setSessionsCompleted] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const activeConfig = MODE_CONFIG[mode];
+  const activeConfig = mode === "custom" ? { ...MODE_CONFIG.custom, duration: parseInt(customMinutes, 10) * 60 || 0 } : MODE_CONFIG[mode];
   const totalDuration = activeConfig.duration;
   const progress = totalDuration > 0 ? (timeLeft / totalDuration) * 100 : 0;
 
@@ -69,13 +76,25 @@ export default function TimerPage() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isActive, mode]);
+  }, [isActive, mode, customMinutes]);
 
   // Handle mode change
   const handleModeChange = (newMode: TimerMode) => {
     setIsActive(false);
     setMode(newMode);
-    setTimeLeft(MODE_CONFIG[newMode].duration);
+    if (newMode === "custom") {
+      setTimeLeft(parseInt(customMinutes, 10) * 60 || 0);
+    } else {
+      setTimeLeft(MODE_CONFIG[newMode].duration);
+    }
+  };
+
+  const handleCustomTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setCustomMinutes(val);
+    if (!isActive) {
+      setTimeLeft(parseInt(val, 10) * 60 || 0);
+    }
   };
 
   // Toggle start/pause
@@ -94,7 +113,7 @@ export default function TimerPage() {
     setIsActive(false);
     if (timerRef.current) clearInterval(timerRef.current);
     
-    if (mode === "focus") {
+    if (mode === "focus" || mode === "custom") {
       setSessionsCompleted((prev) => prev + 1);
       // Play a subtle success audio feedback if available
       try {
@@ -139,6 +158,21 @@ export default function TimerPage() {
           </button>
         ))}
       </div>
+
+      {mode === "custom" && (
+        <div className="w-full flex items-center justify-center gap-3">
+          <label className="text-xs font-semibold text-[var(--text-secondary)] uppercase tracking-wider">Minutes:</label>
+          <input
+            type="number"
+            min="1"
+            max="120"
+            value={customMinutes}
+            onChange={handleCustomTimeChange}
+            disabled={isActive}
+            className="w-20 px-2 py-1 text-center text-sm font-mono bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-sm)] focus:outline-none focus:border-[var(--brand-primary)] text-[var(--text-primary)] disabled:opacity-50"
+          />
+        </div>
+      )}
 
       {/* Circular Timer Visualizer */}
       <div className="relative flex items-center justify-center h-64 w-64 my-4">

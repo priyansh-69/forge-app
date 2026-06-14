@@ -75,6 +75,29 @@ export function useAuth() {
     }
   };
 
+  // Sign in with Google (OAuth)
+  const signInWithGoogle = async () => {
+    setSubmitting(true);
+    setAuthError(null);
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (error) throw error;
+      return data;
+    } catch (err: any) {
+      const errMsg = err.message || "An error occurred during Google sign in.";
+      setAuthError(errMsg);
+      throw err;
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return {
     user,
     profile,
@@ -84,5 +107,6 @@ export function useAuth() {
     signUp,
     signIn,
     signOut,
+    signInWithGoogle,
   };
 }
