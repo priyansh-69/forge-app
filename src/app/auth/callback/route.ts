@@ -6,14 +6,19 @@ export async function GET(request: Request) {
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? '/dashboard'
 
+  // Determine host using proxy headers if available, otherwise fallback to request origin
+  const forwardedHost = request.headers.get('x-forwarded-host')
+  const forwardedProto = request.headers.get('x-forwarded-proto') ?? 'https'
+  const redirectBase = forwardedHost ? `${forwardedProto}://${forwardedHost}` : origin
+
   if (code) {
     const supabase = await createClient()
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) {
-      return NextResponse.redirect(`${origin}${next}`)
+      return NextResponse.redirect(`${redirectBase}${next}`)
     }
   }
 
   // Redirect to login with error parameter
-  return NextResponse.redirect(`${origin}/login?error=Authentication failed`)
+  return NextResponse.redirect(`${redirectBase}/login?error=Authentication failed`)
 }

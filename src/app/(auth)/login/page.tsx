@@ -11,7 +11,12 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get("redirectTo") || "/dashboard";
-  const urlError = searchParams.get("error");
+  
+  const errorParam = searchParams.get("error");
+  const errorDescParam = searchParams.get("error_description");
+  const urlError = errorParam 
+    ? (errorDescParam ? `${errorParam} - ${errorDescParam}` : errorParam) 
+    : null;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
