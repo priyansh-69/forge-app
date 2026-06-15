@@ -63,6 +63,7 @@ export default function SignupPage() {
       <div className="w-full max-w-md mx-auto space-y-8 animate-fade-in">
         {/* Logo and Header */}
         <div className="text-center">
+          <img src="/forge-logo.png" alt="FORGE Logo" className="w-24 h-24 mx-auto mb-4 object-contain" />
           <h1 className="text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-500 to-red-600">
             FORGE
           </h1>

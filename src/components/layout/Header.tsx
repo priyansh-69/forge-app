@@ -20,9 +20,14 @@ export function Header({ title, points = 0 }: HeaderProps) {
     >
       <div className="flex items-center justify-between h-[var(--header-height)] px-4 max-w-lg mx-auto">
         {/* Page title */}
-        <h1 className="text-lg font-bold text-[var(--text-primary)] tracking-tight">
-          {title}
-        </h1>
+        <div className="flex items-center gap-2">
+          {title === "FORGE" && (
+            <img src="/forge-logo.png" alt="Forge Logo" className="w-6 h-6 object-contain" />
+          )}
+          <h1 className="text-lg font-bold text-[var(--text-primary)] tracking-tight">
+            {title}
+          </h1>
+        </div>
 
         {/* Points counter */}
         <Badge variant="points">
