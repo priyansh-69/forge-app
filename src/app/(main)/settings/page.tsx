@@ -69,8 +69,8 @@ export default function SettingsPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (err: any) {
-      alert("Failed to export data: " + err.message);
+    } catch (err) {
+      alert("Failed to export data: " + (err instanceof Error ? err.message : "Unknown error"));
     } finally {
       setExporting(false);
     }
@@ -91,8 +91,8 @@ export default function SettingsPage() {
 
       await signOut();
       router.push("/login");
-    } catch (err: any) {
-      alert("Failed to delete account: " + err.message);
+    } catch (err) {
+      alert("Failed to delete account: " + (err instanceof Error ? err.message : "Unknown error"));
     } finally {
       setDeleting(false);
     }
@@ -103,8 +103,8 @@ export default function SettingsPage() {
     try {
       await signOut();
       router.push("/login");
-    } catch (err: any) {
-      alert("Failed to log out: " + err.message);
+    } catch (err) {
+      alert("Failed to log out: " + (err instanceof Error ? err.message : "Unknown error"));
       setLoggingOut(false);
     }
   };

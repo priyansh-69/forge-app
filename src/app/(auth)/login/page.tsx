@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/Button";
+import Image from "next/image";
 
 function LoginForm() {
   const { signIn, signInWithGoogle, submitting, authError } = useAuth();
@@ -34,7 +35,7 @@ function LoginForm() {
     try {
       await signIn(email, password);
       router.push(redirectTo);
-    } catch (err: any) {
+    } catch (err) {
       // Auth errors are handled in store/hook
       console.error("Login failure:", err);
     }
@@ -44,7 +45,7 @@ function LoginForm() {
     setLocalError(null);
     try {
       await signInWithGoogle();
-    } catch (err: any) {
+    } catch (err) {
       console.error("Google login failure:", err);
     }
   };
@@ -55,7 +56,7 @@ function LoginForm() {
     <div className="w-full max-w-md mx-auto space-y-8 animate-fade-in">
       {/* Logo and Header */}
       <div className="text-center">
-        <img src="/forge-logo.png" alt="FORGE Logo" className="w-24 h-24 mx-auto mb-4 object-contain" />
+        <Image src="/forge-logo.png" alt="FORGE Logo" width={96} height={96} className="mx-auto mb-4 object-contain" />
         <h1 className="text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-500 to-red-600">
           FORGE
         </h1>

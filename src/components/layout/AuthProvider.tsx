@@ -30,7 +30,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         } else {
           clear();
         }
-      } catch (err: any) {
+      } catch (err) {
         console.error("Error checking session:", err);
         if (active) clear();
       }

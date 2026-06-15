@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/Badge";
+import Image from "next/image";
 
 // ============================================================
 // Header — Top bar with page title and points counter
@@ -22,7 +23,7 @@ export function Header({ title, points = 0 }: HeaderProps) {
         {/* Page title */}
         <div className="flex items-center gap-2">
           {title === "FORGE" && (
-            <img src="/forge-logo.png" alt="Forge Logo" className="w-6 h-6 object-contain" />
+            <Image src="/forge-logo.png" alt="Forge Logo" width={24} height={24} className="object-contain" />
           )}
           <h1 className="text-lg font-bold text-[var(--text-primary)] tracking-tight">
             {title}

@@ -1,15 +1,16 @@
 import { create } from "zustand";
 import { UserProfile } from "@/types";
 import { createClient } from "@/lib/supabase/client";
+import { User } from "@supabase/supabase-js";
 
 interface UserState {
-  user: any | null; // Supabase user
+  user: User | null; // Supabase user
   profile: UserProfile | null;
   loading: boolean;
   coachIntensity: "silent" | "standard" | "harsh";
   notifications: boolean;
   voiceToneAnalysis: boolean;
-  setUser: (user: any | null) => void;
+  setUser: (user: User | null) => void;
   setProfile: (profile: UserProfile | null) => void;
   fetchProfile: (userId: string) => Promise<void>;
   setCoachIntensity: (intensity: "silent" | "standard" | "harsh") => void;
@@ -32,7 +33,7 @@ const getStorageItem = <T>(key: string, defaultValue: T): T => {
   }
 };
 
-const setStorageItem = (key: string, value: any) => {
+const setStorageItem = (key: string, value: unknown) => {
   if (typeof window !== "undefined") {
     localStorage.setItem(key, JSON.stringify(value));
   }

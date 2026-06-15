@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -58,6 +58,47 @@ export default function TimerPage() {
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (progress / 100) * circumference;
 
+  // Handle mode change
+  const handleModeChange = useCallback((newMode: TimerMode) => {
+    setIsActive(false);
+    setMode(newMode);
+    if (newMode === "custom") {
+      setTimeLeft(parseInt(customMinutes, 10) * 60 || 0);
+    } else {
+      setTimeLeft(MODE_CONFIG[newMode].duration);
+    }
+  }, [customMinutes]);
+
+  const handleCustomTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setCustomMinutes(val);
+    if (!isActive) {
+      setTimeLeft(parseInt(val, 10) * 60 || 0);
+    }
+  };
+
+  // Handle completion
+  const handleTimerComplete = useCallback(() => {
+    setIsActive(false);
+    if (timerRef.current) clearInterval(timerRef.current);
+    
+    if (mode === "focus" || mode === "custom") {
+      setSessionsCompleted((prev) => prev + 1);
+      // Play a subtle success audio feedback if available
+      try {
+        const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav");
+        audio.volume = 0.3;
+        audio.play();
+      } catch {
+        // Audio playback failed (e.g. user interaction constraint)
+      }
+      alert("Great job! You completed a focus session. +15 Forge Points!");
+    } else {
+      alert("Break finished! Ready to focus?");
+      handleModeChange("focus");
+    }
+  }, [mode, handleModeChange]);
+
   useEffect(() => {
     if (isActive) {
       timerRef.current = setInterval(() => {
@@ -76,26 +117,7 @@ export default function TimerPage() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isActive, mode, customMinutes]);
-
-  // Handle mode change
-  const handleModeChange = (newMode: TimerMode) => {
-    setIsActive(false);
-    setMode(newMode);
-    if (newMode === "custom") {
-      setTimeLeft(parseInt(customMinutes, 10) * 60 || 0);
-    } else {
-      setTimeLeft(MODE_CONFIG[newMode].duration);
-    }
-  };
-
-  const handleCustomTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setCustomMinutes(val);
-    if (!isActive) {
-      setTimeLeft(parseInt(val, 10) * 60 || 0);
-    }
-  };
+  }, [isActive, handleTimerComplete]);
 
   // Toggle start/pause
   const toggleTimer = () => {
@@ -106,28 +128,6 @@ export default function TimerPage() {
   const resetTimer = () => {
     setIsActive(false);
     setTimeLeft(activeConfig.duration);
-  };
-
-  // Handle completion
-  const handleTimerComplete = () => {
-    setIsActive(false);
-    if (timerRef.current) clearInterval(timerRef.current);
-    
-    if (mode === "focus" || mode === "custom") {
-      setSessionsCompleted((prev) => prev + 1);
-      // Play a subtle success audio feedback if available
-      try {
-        const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-500.wav");
-        audio.volume = 0.3;
-        audio.play();
-      } catch (e) {
-        // Audio playback failed (e.g. user interaction constraint)
-      }
-      alert("Great job! You completed a focus session. +15 Forge Points!");
-    } else {
-      alert("Break finished! Ready to focus?");
-      handleModeChange("focus");
-    }
   };
 
   return (

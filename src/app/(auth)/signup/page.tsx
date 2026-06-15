@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/Button";
+import Image from "next/image";
 
 export default function SignupPage() {
   const { signUp, signInWithGoogle, submitting, authError } = useAuth();
@@ -42,7 +43,7 @@ export default function SignupPage() {
       setTimeout(() => {
         router.push("/login");
       }, 3000);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Signup failure:", err);
     }
   };
@@ -51,7 +52,7 @@ export default function SignupPage() {
     setLocalError(null);
     try {
       await signInWithGoogle();
-    } catch (err: any) {
+    } catch (err) {
       console.error("Google signup failure:", err);
     }
   };
@@ -63,7 +64,7 @@ export default function SignupPage() {
       <div className="w-full max-w-md mx-auto space-y-8 animate-fade-in">
         {/* Logo and Header */}
         <div className="text-center">
-          <img src="/forge-logo.png" alt="FORGE Logo" className="w-24 h-24 mx-auto mb-4 object-contain" />
+          <Image src="/forge-logo.png" alt="FORGE Logo" width={96} height={96} className="mx-auto mb-4 object-contain" />
           <h1 className="text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-500 to-red-600">
             FORGE
           </h1>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/hooks/useAuth";
@@ -8,26 +8,29 @@ import { createClient } from "@/lib/supabase/client";
 
 const supabase = createClient();
 
+interface DBEntry {
+  id: string;
+  created_at: string;
+  ai_mode: string;
+  transcript: string | null;
+  ai_response: string | null;
+}
+
 export default function JournalPage() {
   const { user } = useAuth();
-  const [entries, setEntries] = useState<any[]>([]);
+  const [entries, setEntries] = useState<DBEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [newEntry, setNewEntry] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (user) {
-      fetchEntries();
-    }
-  }, [user]);
-
-  const fetchEntries = async () => {
+  const fetchEntries = useCallback(async () => {
+    if (!user) return;
     try {
       setLoading(true);
       const { data, error } = await supabase
         .from("entries")
         .select("*")
-        .eq("user_id", user?.id)
+        .eq("user_id", user.id)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -37,7 +40,16 @@ export default function JournalPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      const timer = setTimeout(() => {
+        fetchEntries();
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [user, fetchEntries]);
 
   const handleSaveEntry = async () => {
     if (!newEntry.trim() || !user) return;
@@ -118,7 +130,7 @@ export default function JournalPage() {
               {entry.ai_response && (
                 <div className="mt-3 p-3 bg-[var(--bg-tertiary)] rounded-[var(--radius-sm)] border-l-2 border-[var(--brand-primary)]">
                   <p className="text-xs font-semibold text-[var(--brand-primary)] mb-1">AI Coach</p>
-                  <p className="text-sm text-[var(--text-secondary)] italic">"{entry.ai_response}"</p>
+                  <p className="text-sm text-[var(--text-secondary)] italic">&quot;{entry.ai_response}&quot;</p>
                 </div>
               )}
             </Card>

@@ -28,8 +28,8 @@ export function useAuth() {
 
       if (error) throw error;
       return data;
-    } catch (err: any) {
-      const errMsg = err.message || "An error occurred during sign up.";
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "An error occurred during sign up.";
       setAuthError(errMsg);
       throw err;
     } finally {
@@ -49,8 +49,8 @@ export function useAuth() {
 
       if (error) throw error;
       return data;
-    } catch (err: any) {
-      const errMsg = err.message || "An error occurred during sign in.";
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "An error occurred during sign in.";
       setAuthError(errMsg);
       throw err;
     } finally {
@@ -66,8 +66,8 @@ export function useAuth() {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
       clear();
-    } catch (err: any) {
-      const errMsg = err.message || "An error occurred during sign out.";
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "An error occurred during sign out.";
       setAuthError(errMsg);
       throw err;
     } finally {
@@ -89,8 +89,8 @@ export function useAuth() {
 
       if (error) throw error;
       return data;
-    } catch (err: any) {
-      const errMsg = err.message || "An error occurred during Google sign in.";
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "An error occurred during Google sign in.";
       setAuthError(errMsg);
       throw err;
     } finally {
