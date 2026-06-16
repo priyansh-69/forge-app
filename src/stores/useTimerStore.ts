@@ -68,6 +68,7 @@ interface TimerState {
   savedPresets: SavedPreset[];
   stats: FocusStatsEntry[];
   hasHydrated: boolean;
+  soundEnabled: boolean;
 
   // Core actions
   hydrate: () => void;
@@ -77,6 +78,7 @@ interface TimerState {
   toggleTimer: () => void;
   resetTimer: () => void;
   tick: (onComplete: () => void) => void;
+  setSoundEnabled: (enabled: boolean) => void;
 
   // Preset management
   addPreset: (name: string, duration: number) => void;
@@ -85,6 +87,7 @@ interface TimerState {
 
   // Stats management
   addStatsEntry: (completed: boolean) => void;
+  deleteStatsEntry: (id: string) => void;
   clearStats: () => void;
 }
 
@@ -129,7 +132,7 @@ export const useTimerStore = create<TimerState>((set, get) => {
   const parseCustomSeconds = (minStr: string): number | null => {
     const parsed = parseFloat(minStr);
     if (isNaN(parsed) || parsed <= 0) return null;
-    return Math.round(parsed * 60);
+    return clampDuration(Math.round(parsed * 60));
   };
 
   /** Compute the correct starting duration for the current mode. */
@@ -153,22 +156,32 @@ export const useTimerStore = create<TimerState>((set, get) => {
     savedPresets: [],
     stats: [],
     hasHydrated: false,
+    soundEnabled: true,
 
     // ---- Hydration (load from localStorage on client mount) ----
     hydrate: () => {
       if (get().hasHydrated) return;
       const savedPresets = getStorageItem<SavedPreset[]>("forge_timer_presets", []);
       const stats = getStorageItem<FocusStatsEntry[]>("forge_timer_stats", []);
+      const soundEnabled = getStorageItem<boolean>("forge_timer_sound_enabled", true);
       set({
         savedPresets,
         stats,
+        soundEnabled,
         sessionsCompleted: getTodaySessionsCount(stats),
         hasHydrated: true,
       });
     },
 
+    setSoundEnabled: (soundEnabled) => {
+      set({ soundEnabled });
+      setStorageItem("forge_timer_sound_enabled", soundEnabled);
+    },
+
     // ---- Mode Selection ----
     setMode: (mode) => {
+      if (get().sessionStarted) return;
+
       const duration = getDurationForMode(mode, get().customMinutes);
       set({
         mode,
@@ -183,6 +196,8 @@ export const useTimerStore = create<TimerState>((set, get) => {
     // ---- Custom Input (while typing — no clamping, deferred to blur/start) ----
     setCustomMinutes: (minStr) => {
       const { mode, isActive, sessionStarted } = get();
+      if (sessionStarted) return;
+
       set({ customMinutes: minStr });
 
       // Only update timeLeft if custom mode, not running, and no session in progress
@@ -196,12 +211,15 @@ export const useTimerStore = create<TimerState>((set, get) => {
 
     // ---- Direct timeLeft setter (used by blur handler in page) ----
     setTimeLeft: (seconds) => {
-      set({ timeLeft: seconds });
+      if (get().sessionStarted) return;
+
+      const clamped = clampDuration(seconds);
+      set({ timeLeft: clamped, sessionDuration: clamped });
     },
 
     // ---- Start / Pause ----
     toggleTimer: () => {
-      const { isActive, mode, customMinutes, timeLeft, pauseCount, sessionStarted } = get();
+      const { isActive, mode, customMinutes, pauseCount, sessionStarted } = get();
 
       if (!isActive) {
         // --- STARTING or RESUMING ---
@@ -289,6 +307,8 @@ export const useTimerStore = create<TimerState>((set, get) => {
     },
 
     loadPreset: (preset) => {
+      if (get().sessionStarted) return;
+
       const duration = clampDuration(preset.duration);
       set({
         mode: "custom",
@@ -320,6 +340,15 @@ export const useTimerStore = create<TimerState>((set, get) => {
         stats: next,
         sessionsCompleted: getTodaySessionsCount(next),
         pauseCount: 0,
+      });
+      setStorageItem("forge_timer_stats", next);
+    },
+
+    deleteStatsEntry: (id) => {
+      const next = get().stats.filter((entry) => entry.id !== id);
+      set({
+        stats: next,
+        sessionsCompleted: getTodaySessionsCount(next),
       });
       setStorageItem("forge_timer_stats", next);
     },

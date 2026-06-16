@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTimerStore, MODE_CONFIG } from "@/stores/useTimerStore";
@@ -8,74 +8,8 @@ import { useUserStore } from "@/stores/useUserStore";
 import { createClient } from "@/lib/supabase/client";
 import { POINTS } from "@/lib/constants";
 import { formatTimer } from "@/lib/utils";
-
-// ============================================================
-// Web Audio API Synthesis Utilities
-// ============================================================
-
-let audioCtx: AudioContext | null = null;
-
-function getAudioContext(): AudioContext | null {
-  if (typeof window === "undefined") return null;
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-  }
-  if (audioCtx.state === "suspended") {
-    audioCtx.resume();
-  }
-  return audioCtx;
-}
-
-/** Play a short, high-pitched tick sound (for the last 10 seconds). */
-export function playTick(): void {
-  try {
-    const ctx = getAudioContext();
-    if (!ctx) return;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(1200, ctx.currentTime);
-    gain.gain.setValueAtTime(0.04, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.03);
-
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.04);
-  } catch {
-    // Silently swallow — audio is non-critical
-  }
-}
-
-/** Play a pleasant ascending chime (C5→E5→G5→C6) on session completion. */
-export function playAlarm(): void {
-  try {
-    const ctx = getAudioContext();
-    if (!ctx) return;
-
-    const notes = [523.25, 659.25, 783.99, 1046.50];
-    const t = ctx.currentTime;
-
-    notes.forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, t + i * 0.12);
-      gain.gain.setValueAtTime(0.12, t + i * 0.12);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.35);
-
-      osc.start(t + i * 0.12);
-      osc.stop(t + i * 0.12 + 0.4);
-    });
-  } catch {
-    // Silently swallow — audio is non-critical
-  }
-}
+import { playNormalTick, playWarningTick, playAlarm, unlockAudioContext } from "@/lib/audio";
+import { toast } from "sonner";
 
 // ============================================================
 // Global Timer Overlay Component
@@ -88,14 +22,14 @@ export default function GlobalTimerOverlay() {
   // Supabase client is stable per browser tab — create once via ref
   const supabaseRef = useRef(createClient());
 
-  const [mounted, setMounted] = useState(false);
-
   const { user, profile, setProfile } = useUserStore();
   const {
     mode,
     timeLeft,
-    sessionDuration,
     isActive,
+    sessionStarted,
+    hasHydrated,
+    soundEnabled,
     tick,
     toggleTimer,
     resetTimer,
@@ -108,13 +42,14 @@ export default function GlobalTimerOverlay() {
 
   // 1. Mount & Hydrate
   useEffect(() => {
-    setMounted(true);
     hydrate();
   }, [hydrate]);
 
   // 2. Focus Session Completion Handler
   const handleComplete = useCallback(async () => {
-    playAlarm();
+    if (soundEnabled) {
+      playAlarm();
+    }
 
     const isFocusOrCustom = mode === "focus" || mode === "custom";
     addStatsEntry(true);
@@ -141,12 +76,12 @@ export default function GlobalTimerOverlay() {
           console.error("Failed to update points in database:", dbErr);
         }
       }
-      alert("Great job! You completed a focus session. +15 Forge Points!");
+      toast.success("Great job! You completed a focus session. +15 Forge Points!");
     } else {
-      alert("Break finished! Ready to focus?");
+      toast.info("Break finished! Ready to focus?");
       setMode("focus");
     }
-  }, [mode, user, profile, setProfile, addStatsEntry, setMode]);
+  }, [mode, user, profile, setProfile, addStatsEntry, setMode, soundEnabled]);
 
   // Mutable ref to always hold the latest handleComplete for the interval callback
   const handleCompleteRef = useRef(handleComplete);
@@ -165,27 +100,41 @@ export default function GlobalTimerOverlay() {
     return () => clearInterval(interval);
   }, [isActive, tick]);
 
-  // 4. Play tick sounds during the last 10 seconds
+  // 4. Play tick sounds every second if active and sound is enabled
   useEffect(() => {
-    if (isActive && timeLeft <= 10 && timeLeft > 0) {
-      if (lastPlayedTickRef.current !== timeLeft) {
-        playTick();
-        lastPlayedTickRef.current = timeLeft;
-      }
+    if (!isActive) {
+      lastPlayedTickRef.current = null;
+      return;
     }
-  }, [isActive, timeLeft]);
+
+    if (!soundEnabled || timeLeft <= 0) {
+      return;
+    }
+
+    if (lastPlayedTickRef.current === null) {
+      lastPlayedTickRef.current = timeLeft;
+      return;
+    }
+
+    if (lastPlayedTickRef.current !== timeLeft) {
+      if (timeLeft <= 10) {
+        playWarningTick();
+      } else {
+        playNormalTick();
+      }
+      lastPlayedTickRef.current = timeLeft;
+    }
+  }, [isActive, timeLeft, soundEnabled]);
 
   // Resume AudioContext on user interaction (browser autoplay policy)
   const handleInteraction = useCallback(() => {
-    getAudioContext();
+    unlockAudioContext();
   }, []);
 
-  // Guard render until client-mounted to avoid SSR hydration mismatch
-  if (!mounted) return null;
+  if (!hasHydrated) return null;
 
-  // Show overlay when timer is active/paused-mid-session AND user is NOT on /timer
-  const isPausedMidway = timeLeft > 0 && timeLeft < sessionDuration;
-  const shouldShowOverlay = (isActive || isPausedMidway) && pathname !== "/timer";
+  // Show overlay for any session in progress, including paused mid-session
+  const shouldShowOverlay = (isActive || sessionStarted) && pathname !== "/timer";
   if (!shouldShowOverlay) return null;
 
   const currentConfig = MODE_CONFIG[mode];

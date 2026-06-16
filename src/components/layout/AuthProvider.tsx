@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useUserStore } from "@/stores/useUserStore";
+import { unlockAudioContext } from "@/lib/audio";
 
 const supabase = createClient();
 
@@ -52,11 +53,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
     );
 
+    // Unlocking AudioContext on first user interaction
+    const handleGesture = () => {
+      unlockAudioContext();
+      window.removeEventListener("click", handleGesture);
+      window.removeEventListener("keydown", handleGesture);
+      window.removeEventListener("touchstart", handleGesture);
+    };
+
+    window.addEventListener("click", handleGesture);
+    window.addEventListener("keydown", handleGesture);
+    window.addEventListener("touchstart", handleGesture);
+
     return () => {
       active = false;
       subscription.unsubscribe();
+      window.removeEventListener("click", handleGesture);
+      window.removeEventListener("keydown", handleGesture);
+      window.removeEventListener("touchstart", handleGesture);
     };
   }, [setUser, fetchProfile, clear]);
 
   return <>{children}</>;
 }
+

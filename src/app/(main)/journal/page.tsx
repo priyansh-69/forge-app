@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
+import { toast } from "sonner";
 
 const supabase = createClient();
 
@@ -65,13 +66,15 @@ export default function JournalPage() {
       if (error) throw error;
       setNewEntry("");
       fetchEntries();
+      toast.success("Journal entry saved successfully!");
     } catch (err) {
       console.error("Error saving entry:", err);
-      alert("Failed to save entry.");
+      toast.error("Failed to save entry: " + (err instanceof Error ? err.message : "Unknown error"));
     } finally {
       setSaving(false);
     }
   };
+
 
   return (
     <div className="space-y-6 animate-fade-in pb-6">

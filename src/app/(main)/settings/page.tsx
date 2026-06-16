@@ -8,6 +8,7 @@ import { APP } from "@/lib/constants";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserStore } from "@/stores/useUserStore";
 import { createClient } from "@/lib/supabase/client";
+import { toast } from "sonner";
 
 // ============================================================
 // Settings Page — Account settings, coaching mode, and PWA options
@@ -39,10 +40,10 @@ export default function SettingsPage() {
     try {
       // Query database tables for this user's data
       const [
-        { data: profileData },
-        { data: entriesData },
-        { data: pointsData },
-        { data: habitsData },
+        profileResult,
+        entriesResult,
+        pointsResult,
+        habitsResult,
       ] = await Promise.all([
         supabase.from("profiles").select("*").eq("id", user.id).single(),
         supabase.from("entries").select("*").eq("user_id", user.id),
@@ -50,11 +51,25 @@ export default function SettingsPage() {
         supabase.from("habits").select("*").eq("user_id", user.id),
       ]);
 
+      const exportResults = [
+        { label: "profile", result: profileResult },
+        { label: "entries", result: entriesResult },
+        { label: "points", result: pointsResult },
+        { label: "habits", result: habitsResult },
+      ] as const;
+
+      const failedQuery = exportResults.find(({ result }) => result.error);
+      if (failedQuery) {
+        throw new Error(
+          `Failed to export ${failedQuery.label}: ${failedQuery.result.error?.message || "Unknown database error"}`
+        );
+      }
+
       const backup = {
-        profile: profileData || profile || {},
-        entries: entriesData || [],
-        points: pointsData || [],
-        habits: habitsData || [],
+        profile: profileResult.data || profile || {},
+        entries: entriesResult.data || [],
+        points: pointsResult.data || [],
+        habits: habitsResult.data || [],
         exportedAt: new Date().toISOString(),
       };
 
@@ -69,8 +84,10 @@ export default function SettingsPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      
+      toast.success("Data exported successfully!");
     } catch (err) {
-      alert("Failed to export data: " + (err instanceof Error ? err.message : "Unknown error"));
+      toast.error("Failed to export data: " + (err instanceof Error ? err.message : "Unknown error"));
     } finally {
       setExporting(false);
     }
@@ -85,14 +102,20 @@ export default function SettingsPage() {
 
     setDeleting(true);
     try {
-      // Cascade delete: deleting profile will delete all user logs due to cascades in DB
-      const { error } = await supabase.from("profiles").delete().eq("id", user.id);
-      if (error) throw error;
+      const response = await fetch("/api/account/delete", {
+        method: "DELETE",
+      });
+
+      const responseData = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(responseData?.error || "Failed to delete account");
+      }
 
       await signOut();
       router.push("/login");
+      toast.success("Account deleted successfully.");
     } catch (err) {
-      alert("Failed to delete account: " + (err instanceof Error ? err.message : "Unknown error"));
+      toast.error("Failed to delete account: " + (err instanceof Error ? err.message : "Unknown error"));
     } finally {
       setDeleting(false);
     }
@@ -103,11 +126,13 @@ export default function SettingsPage() {
     try {
       await signOut();
       router.push("/login");
+      toast.success("Logged out successfully.");
     } catch (err) {
-      alert("Failed to log out: " + (err instanceof Error ? err.message : "Unknown error"));
+      toast.error("Failed to log out: " + (err instanceof Error ? err.message : "Unknown error"));
       setLoggingOut(false);
     }
   };
+
 
   const formatJoinDate = (dateStr?: string) => {
     if (!dateStr) return "Member since June 2026";
