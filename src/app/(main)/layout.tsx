@@ -5,6 +5,7 @@ import { BottomNav } from "@/components/layout/BottomNav";
 import { Header } from "@/components/layout/Header";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { useUserStore } from "@/stores/useUserStore";
+import GlobalTimerOverlay from "@/components/timer/GlobalTimerOverlay";
 
 // ============================================================
 // Main Layout — Protected app shell with Header + BottomNav
@@ -47,6 +48,7 @@ export default function MainLayout({
         </main>
 
         <BottomNav />
+        <GlobalTimerOverlay />
       </div>
     </AuthGuard>
   );
