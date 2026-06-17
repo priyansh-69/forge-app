@@ -40,10 +40,49 @@ export default function GlobalTimerOverlay() {
 
   const lastPlayedTickRef = useRef<number | null>(null);
 
+  // Bug #21: Track pending point awards when profile isn't loaded yet
+  const pendingPointAwardRef = useRef<boolean>(false);
+
   // 1. Mount & Hydrate
   useEffect(() => {
     hydrate();
   }, [hydrate]);
+
+  // Bug #21: Execute queued point award once profile becomes available
+  useEffect(() => {
+    if (pendingPointAwardRef.current && user && profile) {
+      pendingPointAwardRef.current = false;
+      const awardPoints = async () => {
+        const newPoints = profile.totalPoints + POINTS.FOCUS_SESSION;
+        setProfile({ ...profile, totalPoints: newPoints });
+
+        const supabase = supabaseRef.current;
+        const [logResult, updateResult] = await Promise.all([
+          supabase.from("points_log").insert({
+            user_id: user.id,
+            action: "Completed Focus Session",
+            points: POINTS.FOCUS_SESSION,
+          }),
+          supabase
+            .from("profiles")
+            .update({ total_points: newPoints })
+            .eq("id", user.id),
+        ]);
+
+        // Bug #23: Check Supabase error fields explicitly
+        if (logResult.error || updateResult.error) {
+          const errMsg = logResult.error?.message || updateResult.error?.message || "Unknown error";
+          console.error("Failed to update points in database:", errMsg);
+          // Revert optimistic update
+          setProfile({ ...profile, totalPoints: profile.totalPoints });
+          toast.error("Points could not be saved. Please try again.");
+        } else {
+          toast.success("Great job! You completed a focus session. +15 Forge Points!");
+        }
+      };
+      awardPoints();
+    }
+  }, [user, profile, setProfile]);
 
   // 2. Focus Session Completion Handler
   const handleComplete = useCallback(async () => {
@@ -56,27 +95,41 @@ export default function GlobalTimerOverlay() {
 
     if (isFocusOrCustom) {
       if (user && profile) {
-        const newPoints = profile.totalPoints + POINTS.FOCUS_SESSION;
+        // Profile is available — award points immediately
+        const previousPoints = profile.totalPoints;
+        const newPoints = previousPoints + POINTS.FOCUS_SESSION;
         setProfile({ ...profile, totalPoints: newPoints });
 
-        try {
-          const supabase = supabaseRef.current;
-          await Promise.all([
-            supabase.from("points_log").insert({
-              user_id: user.id,
-              action: "Completed Focus Session",
-              points: POINTS.FOCUS_SESSION,
-            }),
-            supabase
-              .from("profiles")
-              .update({ total_points: newPoints })
-              .eq("id", user.id),
-          ]);
-        } catch (dbErr) {
-          console.error("Failed to update points in database:", dbErr);
+        const supabase = supabaseRef.current;
+        const [logResult, updateResult] = await Promise.all([
+          supabase.from("points_log").insert({
+            user_id: user.id,
+            action: "Completed Focus Session",
+            points: POINTS.FOCUS_SESSION,
+          }),
+          supabase
+            .from("profiles")
+            .update({ total_points: newPoints })
+            .eq("id", user.id),
+        ]);
+
+        // Bug #23: Check error fields — Supabase resolves with { error } instead of throwing
+        if (logResult.error || updateResult.error) {
+          const errMsg = logResult.error?.message || updateResult.error?.message || "Unknown error";
+          console.error("Failed to update points in database:", errMsg);
+          // Revert optimistic update
+          setProfile({ ...profile, totalPoints: previousPoints });
+          toast.error("Session completed but points could not be saved: " + errMsg);
+        } else {
+          toast.success("Great job! You completed a focus session. +15 Forge Points!");
         }
+      } else if (user && !profile) {
+        // Bug #21: Profile not loaded yet — queue the award for when it arrives
+        pendingPointAwardRef.current = true;
+        toast.success("Great job! You completed a focus session. Points will be awarded shortly.");
+      } else {
+        toast.success("Great job! You completed a focus session.");
       }
-      toast.success("Great job! You completed a focus session. +15 Forge Points!");
     } else {
       toast.info("Break finished! Ready to focus?");
       setMode("focus");

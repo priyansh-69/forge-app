@@ -44,7 +44,8 @@ function LoginForm() {
   const handleGoogleSignIn = async () => {
     setLocalError(null);
     try {
-      await signInWithGoogle();
+      // Bug #19: Thread redirect destination through Google OAuth
+      await signInWithGoogle(redirectTo);
     } catch (err) {
       console.error("Google login failure:", err);
     }

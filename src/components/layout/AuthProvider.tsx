@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useUserStore } from "@/stores/useUserStore";
+import { useTimerStore } from "@/stores/useTimerStore";
 import { unlockAudioContext } from "@/lib/audio";
 
 const supabase = createClient();
@@ -12,10 +13,25 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const { setUser, fetchProfile, clear } = useUserStore();
+  const { setUser, fetchProfile, clear, rehydratePreferences } = useUserStore();
+  const { rehydrateForUser, clearPersistedState } = useTimerStore();
+  // Bug #20/#22: Track the last known user ID to detect identity changes
+  const lastUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
+
+    // Helper to handle a new authenticated identity
+    const handleIdentity = async (userId: string) => {
+      // Bug #20: Compare against last known user ID
+      if (lastUserIdRef.current !== userId) {
+        lastUserIdRef.current = userId;
+        // Bug #22: Rehydrate user-scoped preferences and timer data
+        rehydratePreferences(userId);
+        rehydrateForUser(userId);
+      }
+      await fetchProfile(userId);
+    };
 
     // Check active session on mount
     const checkSession = async () => {
@@ -27,13 +43,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
         if (session?.user) {
           setUser(session.user);
-          await fetchProfile(session.user.id);
+          await handleIdentity(session.user.id);
         } else {
+          lastUserIdRef.current = null;
           clear();
+          clearPersistedState();
         }
       } catch (err) {
         console.error("Error checking session:", err);
-        if (active) clear();
+        if (active) {
+          lastUserIdRef.current = null;
+          clear();
+        }
       }
     };
 
@@ -46,9 +67,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
         
         if (session?.user) {
           setUser(session.user);
-          await fetchProfile(session.user.id);
+          await handleIdentity(session.user.id);
         } else {
+          // Bug #22: Clear all persisted state on sign-out
+          lastUserIdRef.current = null;
           clear();
+          clearPersistedState();
         }
       }
     );
@@ -72,7 +96,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       window.removeEventListener("keydown", handleGesture);
       window.removeEventListener("touchstart", handleGesture);
     };
-  }, [setUser, fetchProfile, clear]);
+  }, [setUser, fetchProfile, clear, rehydratePreferences, rehydrateForUser, clearPersistedState]);
 
   return <>{children}</>;
 }

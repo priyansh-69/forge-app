@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useUserStore } from "@/stores/useUserStore";
+import { useTimerStore } from "@/stores/useTimerStore";
 
 const supabase = createClient();
 
@@ -65,6 +66,8 @@ export function useAuth() {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
+      // Bug #22: Clear user-scoped persisted state on sign-out
+      useTimerStore.getState().clearPersistedState();
       clear();
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : "An error occurred during sign out.";
@@ -76,14 +79,21 @@ export function useAuth() {
   };
 
   // Sign in with Google (OAuth)
-  const signInWithGoogle = async () => {
+  // Bug #19: Accept optional redirectTo to preserve the intended destination through OAuth
+  const signInWithGoogle = async (redirectTo?: string) => {
     setSubmitting(true);
     setAuthError(null);
     try {
+      // Build callback URL with the intended destination
+      let callbackUrl = `${window.location.origin}/auth/callback`;
+      if (redirectTo && redirectTo !== "/dashboard") {
+        callbackUrl += `?next=${encodeURIComponent(redirectTo)}`;
+      }
+
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: callbackUrl,
         },
       });
 
