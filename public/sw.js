@@ -2,7 +2,7 @@
 // FORGE — Service Worker for PWA offline support (Bug #16)
 // ============================================================
 
-const CACHE_VERSION = 'forge-v1';
+const CACHE_VERSION = 'forge-v2';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const DYNAMIC_CACHE = `${CACHE_VERSION}-dynamic`;
 
@@ -41,6 +41,16 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
+
+  // Bypass service worker caching completely on localhost/development environments
+  if (
+    url.hostname === 'localhost' ||
+    url.hostname === '127.0.0.1' ||
+    url.hostname.startsWith('192.168.') ||
+    url.hostname.endsWith('.local')
+  ) {
+    return;
+  }
 
   // Skip non-GET requests
   if (request.method !== 'GET') return;

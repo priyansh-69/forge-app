@@ -27,7 +27,16 @@ export function useAuth() {
         },
       });
 
+      console.log("Supabase signUp response:", { data, error });
+
       if (error) throw error;
+
+      // Check if user already exists (if user is null or identities array is empty, it is a duplicate signup)
+      const isDuplicate = !data?.user || !data.user.identities || data.user.identities.length === 0;
+      if (isDuplicate) {
+        throw new Error("This email address is already in use. Please use another email or log in.");
+      }
+
       return data;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : "An error occurred during sign up.";
