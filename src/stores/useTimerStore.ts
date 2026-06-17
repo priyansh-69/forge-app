@@ -69,6 +69,8 @@ interface TimerState {
   stats: FocusStatsEntry[];
   hasHydrated: boolean;
   soundEnabled: boolean;
+  /** Bug #22: Track which user the persisted state belongs to */
+  persistedUserId: string | null;
 
   // Core actions
   hydrate: () => void;
@@ -89,6 +91,10 @@ interface TimerState {
   addStatsEntry: (completed: boolean) => void;
   deleteStatsEntry: (id: string) => void;
   clearStats: () => void;
+
+  // Bug #22: User-scoped persistence
+  rehydrateForUser: (userId: string) => void;
+  clearPersistedState: () => void;
 }
 
 // ============================================================
@@ -110,6 +116,15 @@ const setStorageItem = (key: string, value: unknown) => {
   if (typeof window !== "undefined") {
     localStorage.setItem(key, JSON.stringify(value));
   }
+};
+
+// Bug #22: User-scoped storage helpers
+const getUserStorageItem = <T>(userId: string, key: string, defaultValue: T): T => {
+  return getStorageItem(`${key}_${userId}`, defaultValue);
+};
+
+const setUserStorageItem = (userId: string, key: string, value: unknown) => {
+  setStorageItem(`${key}_${userId}`, value);
 };
 
 // ============================================================
@@ -157,8 +172,10 @@ export const useTimerStore = create<TimerState>((set, get) => {
     stats: [],
     hasHydrated: false,
     soundEnabled: true,
+    persistedUserId: null,
 
     // ---- Hydration (load from localStorage on client mount) ----
+    // Falls back to global keys for backward compat
     hydrate: () => {
       if (get().hasHydrated) return;
       const savedPresets = getStorageItem<SavedPreset[]>("forge_timer_presets", []);
@@ -173,8 +190,52 @@ export const useTimerStore = create<TimerState>((set, get) => {
       });
     },
 
+    // Bug #22: Rehydrate state scoped to a specific user
+    rehydrateForUser: (userId: string) => {
+      const savedPresets = getUserStorageItem<SavedPreset[]>(userId, "forge_timer_presets",
+        getStorageItem<SavedPreset[]>("forge_timer_presets", []));
+      const stats = getUserStorageItem<FocusStatsEntry[]>(userId, "forge_timer_stats",
+        getStorageItem<FocusStatsEntry[]>("forge_timer_stats", []));
+      const soundEnabled = getUserStorageItem<boolean>(userId, "forge_timer_sound_enabled",
+        getStorageItem<boolean>("forge_timer_sound_enabled", true));
+      set({
+        savedPresets,
+        stats,
+        soundEnabled,
+        sessionsCompleted: getTodaySessionsCount(stats),
+        hasHydrated: true,
+        persistedUserId: userId,
+        // Reset active session on user switch
+        isActive: false,
+        sessionStarted: false,
+        timeLeft: getDurationForMode(get().mode, get().customMinutes),
+      });
+    },
+
+    // Bug #22: Clear persisted state (called on sign-out)
+    clearPersistedState: () => {
+      set({
+        savedPresets: [],
+        stats: [],
+        sessionsCompleted: 0,
+        soundEnabled: true,
+        persistedUserId: null,
+        isActive: false,
+        sessionStarted: false,
+        pauseCount: 0,
+        mode: "focus",
+        customMinutes: "25",
+        timeLeft: DEFAULT_DURATION,
+        sessionDuration: DEFAULT_DURATION,
+      });
+    },
+
     setSoundEnabled: (soundEnabled) => {
+      const { persistedUserId } = get();
       set({ soundEnabled });
+      if (persistedUserId) {
+        setUserStorageItem(persistedUserId, "forge_timer_sound_enabled", soundEnabled);
+      }
       setStorageItem("forge_timer_sound_enabled", soundEnabled);
     },
 
@@ -297,12 +358,20 @@ export const useTimerStore = create<TimerState>((set, get) => {
       };
       const next = [...savedPresets, newPreset];
       set({ savedPresets: next });
+      const { persistedUserId } = get();
+      if (persistedUserId) {
+        setUserStorageItem(persistedUserId, "forge_timer_presets", next);
+      }
       setStorageItem("forge_timer_presets", next);
     },
 
     deletePreset: (id) => {
       const next = get().savedPresets.filter((p) => p.id !== id);
       set({ savedPresets: next });
+      const { persistedUserId } = get();
+      if (persistedUserId) {
+        setUserStorageItem(persistedUserId, "forge_timer_presets", next);
+      }
       setStorageItem("forge_timer_presets", next);
     },
 
@@ -341,6 +410,10 @@ export const useTimerStore = create<TimerState>((set, get) => {
         sessionsCompleted: getTodaySessionsCount(next),
         pauseCount: 0,
       });
+      const { persistedUserId } = get();
+      if (persistedUserId) {
+        setUserStorageItem(persistedUserId, "forge_timer_stats", next);
+      }
       setStorageItem("forge_timer_stats", next);
     },
 
@@ -350,11 +423,19 @@ export const useTimerStore = create<TimerState>((set, get) => {
         stats: next,
         sessionsCompleted: getTodaySessionsCount(next),
       });
+      const { persistedUserId } = get();
+      if (persistedUserId) {
+        setUserStorageItem(persistedUserId, "forge_timer_stats", next);
+      }
       setStorageItem("forge_timer_stats", next);
     },
 
     clearStats: () => {
       set({ stats: [], sessionsCompleted: 0 });
+      const { persistedUserId } = get();
+      if (persistedUserId) {
+        setUserStorageItem(persistedUserId, "forge_timer_stats", []);
+      }
       setStorageItem("forge_timer_stats", []);
     },
   };

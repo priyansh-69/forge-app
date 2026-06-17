@@ -1,15 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/Button";
 import Image from "next/image";
 
-export default function SignupPage() {
+function SignupForm() {
   const { signUp, signInWithGoogle, submitting, authError } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Bug #19: Read redirect destination from query params
+  const redirectTo = searchParams.get("redirectTo") || "/dashboard";
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -51,7 +54,8 @@ export default function SignupPage() {
   const handleGoogleSignUp = async () => {
     setLocalError(null);
     try {
-      await signInWithGoogle();
+      // Bug #19: Thread redirect destination through Google OAuth
+      await signInWithGoogle(redirectTo);
     } catch (err) {
       console.error("Google signup failure:", err);
     }
@@ -60,7 +64,6 @@ export default function SignupPage() {
   const displayError = localError || authError;
 
   return (
-    <div className="flex flex-col justify-center min-h-screen px-6 py-12 bg-[#0b0d10] text-[#f8fafc]">
       <div className="w-full max-w-md mx-auto space-y-8 animate-fade-in">
         {/* Logo and Header */}
         <div className="text-center">
@@ -208,6 +211,19 @@ export default function SignupPage() {
           </Link>
         </p>
       </div>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <div className="flex flex-col justify-center min-h-screen px-6 py-12 bg-[#0b0d10] text-[#f8fafc]">
+      <Suspense fallback={
+        <div className="text-center text-[#8b92a5] text-sm">
+          Loading signup form...
+        </div>
+      }>
+        <SignupForm />
+      </Suspense>
     </div>
   );
 }
