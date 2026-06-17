@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { APP } from "@/lib/constants";
 import { AuthProvider } from "@/components/layout/AuthProvider";
+import { ServiceWorkerRegistration } from "@/components/layout/ServiceWorkerRegistration";
 import { Toaster } from "sonner";
 
 // ============================================================
@@ -42,6 +43,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col antialiased">
         <AuthProvider>{children}</AuthProvider>
+        <ServiceWorkerRegistration />
         <Toaster theme="dark" position="top-center" closeButton richColors toastOptions={{ style: { background: "rgba(20, 24, 32, 0.85)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", border: "1px solid var(--border-default)" } }} />
       </body>
     </html>

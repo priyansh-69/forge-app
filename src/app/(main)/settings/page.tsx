@@ -233,7 +233,27 @@ export default function SettingsPage() {
               </p>
             </div>
             <button
-              onClick={() => setNotifications(!notifications)}
+              onClick={async () => {
+                if (!notifications) {
+                  // Bug #6: Request browser notification permission when toggling ON
+                  if ("Notification" in window) {
+                    const permission = await Notification.requestPermission();
+                    if (permission === "granted") {
+                      setNotifications(true);
+                      toast.success("Daily reminders enabled!");
+                    } else if (permission === "denied") {
+                      toast.error("Notification permission denied. Please enable it in your browser settings.");
+                    } else {
+                      toast.info("Notification permission was dismissed. Toggle again to retry.");
+                    }
+                  } else {
+                    toast.error("Notifications are not supported in this browser.");
+                  }
+                } else {
+                  setNotifications(false);
+                  toast.info("Daily reminders disabled.");
+                }
+              }}
               className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
                 notifications ? "bg-[var(--brand-primary)]" : "bg-[var(--bg-elevated)]"
               }`}
