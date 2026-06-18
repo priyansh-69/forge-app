@@ -18,6 +18,7 @@ interface DBEntry {
   title: string | null;
   day_rating: number | null;
   deleted_at: string | null;
+  audio_url: string | null;
 }
 
 export default function JournalPage() {
@@ -455,6 +456,24 @@ export default function JournalPage() {
                     >
                       {expandedEntries.has(entry.id) ? "Read Less" : "Read More"}
                     </button>
+                  )}
+                  {entry.audio_url && (
+                    <div className="mt-2.5">
+                      {entry.audio_url.includes("video") || entry.audio_url.endsWith(".mp4") || entry.audio_url.includes("webm") ? (
+                        <video
+                          src={entry.audio_url}
+                          controls
+                          playsInline
+                          className="w-full max-h-48 rounded-[var(--radius-sm)] border border-[rgba(255,255,255,0.06)] bg-black"
+                        />
+                      ) : (
+                        <audio
+                          src={entry.audio_url}
+                          controls
+                          className="w-full focus:outline-none"
+                        />
+                      )}
+                    </div>
                   )}
                 </>
               )}

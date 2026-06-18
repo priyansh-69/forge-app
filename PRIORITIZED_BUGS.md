@@ -95,22 +95,6 @@ These issues revolve around the journal feed, metadata rating logs, and general 
 
 ---
 
-## 🎨 Category 4: Mockups & Core Features (Interrelated)
-
-These three modules represent features defined in the schema but currently lacking real frontend logic or backend integration.
-
-### 4. Static Record Page Mockup (Voice Check-ins)
-*   **Urgency**: 🟡 Moderate (Core check-in voice record feature does not work)
-*   **Complexity**: 🔥 Hard (Integrate browser `MediaRecorder` API, WAV compression, upload to Supabase Storage bucket, and insert entry row)
-*   **Core Files**: [record/page.tsx](file:///Users/priyanshsmac/Desktop/new_projet/src/app/(main)/record/page.tsx)
-
-### 5. Static Dashboard Overview
-*   **Urgency**: 🟡 Moderate (All stats cards are hardcoded to zero; AI Coach gives static placeholder advice)
-*   **Complexity**: 🔥 Hard (Must fetch and aggregate streak/focus metrics from Supabase logs and call Gemini API for advice)
-*   **Core Files**: [dashboard/page.tsx](file:///Users/priyanshsmac/Desktop/new_projet/src/app/(main)/dashboard/page.tsx)
-
----
-
 ## 📱 Category 5: PWA & Notifications Infrastructure (Interrelated)
 
 These tasks cover PWA standard capabilities like offline support and local background push notifications.
@@ -131,6 +115,8 @@ These tasks cover PWA standard capabilities like offline support and local backg
 These issues have been fully resolved during our recent optimization pass:
 *   **Bug 1**: Custom Timer Input Parsing & Limits (Float inputs properly converted to seconds).
 *   **Bug 2**: Audio Playback Failures (URL playbacks fully replaced with Web Audio API synthesis).
+*   **Bug 4**: Static Record Page Mockup (Voice Check-ins) (Fully implemented MediaRecorder audio capture, canvas visualizer, live transcript dictation, Supabase storage uploads, streak logic, and points sync).
+*   **Bug 5**: Static Dashboard Overview (Connected to profiles and Supabase check-in count data, added real-time streaks, and time greetings).
 *   **Bug 7**: Unimplemented Habit Tracking Features (Daily checklist added to dashboard and dynamic management page created at `/habits`).
 *   **Bug 9**: Timer Resets on Tab Change (Timer moved to global Zustand state with overlay support).
 *   **Bug 12**: Pausing Custom Timer State Corruption (Inputs disabled during active/paused sessions).

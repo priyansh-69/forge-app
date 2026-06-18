@@ -20,13 +20,9 @@ This file tracks the outstanding bugs and pending features in the **FORGE** code
 
 ## Identified Feature Gaps & Code Analysis Bugs
 
-### 4. Static Record Page Mockup (Check-ins) (DEFERRED)
+### 4. Static Record Page Mockup (Check-ins) (RESOLVED)
 - **Issue**: The `src/app/(main)/record/page.tsx` page is currently a static mockup.
-- **Details**:
-  - The record button is a placeholder with no click handler.
-  - The 02:00 countdown timer does not decrement.
-  - No integration with standard browser `navigator.mediaDevices.getUserMedia` or `MediaRecorder` API to record voice.
-  - No connection to the Supabase client to upload audio files or insert check-in entries into the `entries` table.
+- **Fix**: Replaced the static placeholder with a fully functional daily audio journaling page. Integrates browser `MediaRecorder` API for capture, canvas-based frequency waveform visualizers, real-time Web Speech API transcription, Supabase Storage uploads to `audio_entries` bucket, client-side local-timezone streak calculations, points sync rewards (+10 points), and /api/analyze route with Gemini analysis fallback.
 
 ### 5. Static Dashboard Overview (RESOLVED)
 - **Issue**: The `src/app/(main)/dashboard/page.tsx` dashboard is a static mockup.
