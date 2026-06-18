@@ -1,16 +1,33 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { useUserStore } from "@/stores/useUserStore";
 import { useTimerStore } from "@/stores/useTimerStore";
 import { useAuth } from "@/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
+import { toast } from "sonner";
 
 // ============================================================
 // Dashboard Page — Life metrics overview (Bug #5: Wired to real data)
 // ============================================================
+
+interface Habit {
+  id: string;
+  name: string;
+  icon: string | null;
+  created_at: string;
+}
+
+interface HabitLog {
+  id: string;
+  habit_id: string;
+  user_id: string;
+  completed_at: string;
+}
 
 const supabase = createClient();
 
@@ -24,11 +41,17 @@ function getGreeting(): string {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { user } = useAuth();
   const { profile } = useUserStore();
   const { stats, hasHydrated } = useTimerStore();
   const [todayCheckinCount, setTodayCheckinCount] = useState(0);
   const [hasCheckedInToday, setHasCheckedInToday] = useState(false);
+
+  // Habits State
+  const [habits, setHabits] = useState<Habit[]>([]);
+  const [habitLogs, setHabitLogs] = useState<HabitLog[]>([]);
+  const [habitsLoading, setHabitsLoading] = useState(true);
 
   // Calculate focus hours from timer stats
   const focusHours = hasHydrated
@@ -60,11 +83,109 @@ export default function DashboardPage() {
     }
   }, [user]);
 
+  // Fetch all user habits and today's completions
+  const fetchHabitsData = useCallback(async () => {
+    if (!user) return;
+    try {
+      setHabitsLoading(true);
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      const [habitsRes, logsRes] = await Promise.all([
+        supabase
+          .from("habits")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("habit_logs")
+          .select("*")
+          .eq("user_id", user.id)
+          .gte("completed_at", todayStart.toISOString()),
+      ]);
+
+      if (habitsRes.error) throw habitsRes.error;
+      if (logsRes.error) throw logsRes.error;
+
+      setHabits(habitsRes.data || []);
+      setHabitLogs(logsRes.data || []);
+    } catch (err) {
+      console.error("Error fetching habits data:", err);
+      toast.error("Failed to load habits.");
+    } finally {
+      setHabitsLoading(false);
+    }
+  }, [user]);
+
+  // Toggle habit log completion (optimistic update)
+  const handleToggleHabit = async (habitId: string, habitName: string) => {
+    if (!user) return;
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const existingLog = habitLogs.find(
+      (log) => log.habit_id === habitId && new Date(log.completed_at) >= todayStart
+    );
+
+    if (existingLog) {
+      // Optimistic delete
+      setHabitLogs((prev) => prev.filter((log) => log.id !== existingLog.id));
+
+      try {
+        const { error } = await supabase
+          .from("habit_logs")
+          .delete()
+          .eq("id", existingLog.id);
+
+        if (error) throw error;
+        toast.info(`Habit "${habitName}" unchecked.`);
+      } catch (err) {
+        console.error("Error deleting habit log:", err);
+        // Revert on error
+        setHabitLogs((prev) => [...prev, existingLog]);
+        toast.error("Failed to update habit log.");
+      }
+    } else {
+      // Optimistic insert
+      const tempId = "temp-" + Date.now();
+      const tempLog: HabitLog = {
+        id: tempId,
+        habit_id: habitId,
+        user_id: user.id,
+        completed_at: new Date().toISOString(),
+      };
+      setHabitLogs((prev) => [...prev, tempLog]);
+
+      try {
+        const { data, error } = await supabase
+          .from("habit_logs")
+          .insert({
+            habit_id: habitId,
+            user_id: user.id,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        // Update with real db log object
+        setHabitLogs((prev) => prev.map((log) => (log.id === tempId ? data : log)));
+        toast.success(`Habit "${habitName}" checked off!`);
+      } catch (err) {
+        console.error("Error inserting habit log:", err);
+        // Revert on error
+        setHabitLogs((prev) => prev.filter((log) => log.id !== tempId));
+        toast.error("Failed to complete habit.");
+      }
+    }
+  };
+
   useEffect(() => {
     if (user) {
       fetchTodayCheckins();
+      fetchHabitsData();
     }
-  }, [user, fetchTodayCheckins]);
+  }, [user, fetchTodayCheckins, fetchHabitsData]);
 
   const currentStreak = profile?.currentStreak || 0;
   const longestStreak = profile?.longestStreak || 0;
@@ -150,6 +271,86 @@ export default function DashboardPage() {
             ? "You've checked in today. Great job staying consistent!"
             : "Tap the mic button below to record your 2-minute check-in."}
         </p>
+      </Card>
+
+      {/* Daily Habits Checklist */}
+      <Card variant="glass" className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+              Daily Habits
+            </h3>
+            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+              Complete your daily routines
+            </p>
+          </div>
+          <button
+            onClick={() => router.push("/habits")}
+            className="text-xs font-semibold text-[var(--brand-primary)] hover:underline cursor-pointer"
+          >
+            Manage
+          </button>
+        </div>
+
+        {habitsLoading ? (
+          <div className="text-center text-xs text-[var(--text-muted)] py-4">
+            Loading habits...
+          </div>
+        ) : habits.length === 0 ? (
+          <div className="text-center text-xs text-[var(--text-muted)] py-4 space-y-2">
+            <p>No habits configured yet.</p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => router.push("/habits")}
+              className="cursor-pointer"
+            >
+              Set up habits
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {habits.map((habit) => {
+              const todayStart = new Date();
+              todayStart.setHours(0, 0, 0, 0);
+              const isCompleted = habitLogs.some(
+                (log) => log.habit_id === habit.id && new Date(log.completed_at) >= todayStart
+              );
+
+              return (
+                <div
+                  key={habit.id}
+                  onClick={() => handleToggleHabit(habit.id, habit.name)}
+                  className="flex items-center justify-between p-2.5 rounded-[var(--radius-md)] bg-[rgba(255,255,255,0.01)] border border-[var(--border-default)] hover:border-[var(--brand-primary)]/40 transition-all cursor-pointer select-none"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-lg">{habit.icon || "🌟"}</span>
+                    <span className={`text-sm font-medium transition-all duration-200 ${
+                      isCompleted ? "text-[var(--text-muted)] line-through" : "text-[var(--text-primary)]"
+                    }`}>
+                      {habit.name}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`h-5 w-5 rounded-full border flex items-center justify-center transition-all duration-200 shrink-0 ${
+                      isCompleted
+                        ? "bg-[var(--brand-primary)] border-[var(--brand-primary)] text-[var(--bg-primary)]"
+                        : "border-[var(--border-default)] hover:border-[var(--brand-primary)]"
+                    }`}
+                    aria-label={isCompleted ? "Mark incomplete" : "Mark complete"}
+                  >
+                    {isCompleted && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Card>
 
       {/* AI Coach */}

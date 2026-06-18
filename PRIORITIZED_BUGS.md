@@ -109,11 +109,6 @@ These three modules represent features defined in the schema but currently lacki
 *   **Complexity**: 🔥 Hard (Must fetch and aggregate streak/focus metrics from Supabase logs and call Gemini API for advice)
 *   **Core Files**: [dashboard/page.tsx](file:///Users/priyanshsmac/Desktop/new_projet/src/app/(main)/dashboard/page.tsx)
 
-### 7. Unimplemented Habit Tracking Features
-*   **Urgency**: 🟡 Moderate (The habits UI page is missing entirely despite table schemas existing in the database)
-*   **Complexity**: 🔥 Hard (Requires writing a full view, add habit controls, streak checkers, and check-off logger)
-*   **Core Files**: Needs new page at `/habits` or within dashboard routes
-
 ---
 
 ## 📱 Category 5: PWA & Notifications Infrastructure (Interrelated)
@@ -136,6 +131,7 @@ These tasks cover PWA standard capabilities like offline support and local backg
 These issues have been fully resolved during our recent optimization pass:
 *   **Bug 1**: Custom Timer Input Parsing & Limits (Float inputs properly converted to seconds).
 *   **Bug 2**: Audio Playback Failures (URL playbacks fully replaced with Web Audio API synthesis).
+*   **Bug 7**: Unimplemented Habit Tracking Features (Daily checklist added to dashboard and dynamic management page created at `/habits`).
 *   **Bug 9**: Timer Resets on Tab Change (Timer moved to global Zustand state with overlay support).
 *   **Bug 12**: Pausing Custom Timer State Corruption (Inputs disabled during active/paused sessions).
 *   **Bug 17**: Thread Freezing from Synchronous Alerts (Blocking alerts replaced with non-blocking Sonner toasts).

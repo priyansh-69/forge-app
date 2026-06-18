@@ -36,8 +36,9 @@ This file tracks the outstanding bugs and pending features in the **FORGE** code
 - **Issue**: In `settings/page.tsx`, toggling "Daily Reminders" updates `localStorage` but does not request browser notifications permission, schedule Service Worker push notifications, or run background reminders.
 - **Fix**: Requests browser `Notification.requestPermission()` before enabling reminders, notifying the user and reverting the toggle if permission is denied.
 
-### 7. Unimplemented Habit Tracking Features (DEFERRED)
-- **Issue**: The database schema defines `habits` and `habit_logs` tables, but there is currently no Habits section, Habits tab, or page in the UI to manage or complete them.
+### 7. Unimplemented Habit Tracking Features (RESOLVED)
+- **Issue**: The database schema defines `habits` and `habit_logs` tables, but there was no Habits section, Habits tab, or page in the UI to manage or complete them.
+- **Fix**: Created a dedicated habits management page at `/habits` and integrated a Daily Habits checklist card directly on the Dashboard, supporting preset habits, custom emojis, deletion, and optimistic UI check-offs with toast feedback.
 
 ### 8. Hardcoded Supabase Redirect Rules (OAuth Fallbacks) (DEFERRED)
 - **Issue**: If Supabase's Site URL is misconfigured, users are redirected back to `localhost:3000` from production.
