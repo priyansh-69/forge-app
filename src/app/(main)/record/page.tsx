@@ -60,8 +60,15 @@ export default function RecordPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
-    const SpeechCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    setIsSpeechSupported(!!SpeechCtor);
+    const win = window as unknown as {
+      SpeechRecognition?: new () => unknown;
+      webkitSpeechRecognition?: new () => unknown;
+    };
+    const SpeechCtor = win.SpeechRecognition || win.webkitSpeechRecognition;
+    const timer = setTimeout(() => {
+      setIsSpeechSupported(!!SpeechCtor);
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   // Review states
@@ -80,7 +87,12 @@ export default function RecordPage() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationRef = useRef<number | null>(null);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<{ stop: () => void; onend: (() => void) | null } | null>(null);
+
+  const handleStopRecordingRef = useRef(handleStopRecording);
+  useEffect(() => {
+    handleStopRecordingRef.current = handleStopRecording;
+  });
 
   // HTML5 audio preview state
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -125,7 +137,7 @@ export default function RecordPage() {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
-          handleStopRecording();
+          handleStopRecordingRef.current();
           return 0;
         }
 
@@ -209,7 +221,11 @@ export default function RecordPage() {
       streamRef.current = stream;
 
       // Web Audio setup
-      const AudioCtxCtor = window.AudioContext || (window as any).webkitAudioContext;
+      const win = window as unknown as {
+        AudioContext: typeof AudioContext;
+        webkitAudioContext: typeof AudioContext;
+      };
+      const AudioCtxCtor = win.AudioContext || win.webkitAudioContext;
       const audioContext = new AudioCtxCtor();
       audioCtxRef.current = audioContext;
 
@@ -225,7 +241,7 @@ export default function RecordPage() {
           ? { mimeType: "video/webm;codecs=vp9,opus" } 
           : { mimeType: "audio/webm" };
         mediaRecorder = new MediaRecorder(stream, mimeOptions);
-      } catch (err) {
+      } catch {
         console.warn("Requested MIME not supported, falling back to default");
         mediaRecorder = new MediaRecorder(stream);
       }
@@ -249,22 +265,46 @@ export default function RecordPage() {
       mediaRecorder.start(250); // Send chunks every 250ms
 
       // Web Speech API Transcription Setup
-      const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const winSpeech = window as unknown as {
+        SpeechRecognition?: new () => unknown;
+        webkitSpeechRecognition?: new () => unknown;
+      };
+      const SpeechRecognitionCtor = winSpeech.SpeechRecognition || winSpeech.webkitSpeechRecognition;
       if (SpeechRecognitionCtor) {
-        const rec = new SpeechRecognitionCtor();
+        const rec = new SpeechRecognitionCtor() as {
+          stop: () => void;
+          onend: (() => void) | null;
+          continuous: boolean;
+          interimResults: boolean;
+          lang: string;
+          onresult: (event: unknown) => void;
+          start: () => void;
+        };
         rec.continuous = true;
         rec.interimResults = true;
         rec.lang = "en-US";
 
         let segmentTranscript = "";
 
-        rec.onresult = (event: any) => {
+        rec.onresult = (event: unknown) => {
+          const ev = event as {
+            resultIndex: number;
+            results: {
+              [index: number]: {
+                isFinal: boolean;
+                [index: number]: {
+                  transcript: string;
+                };
+              };
+              length: number;
+            };
+          };
           let currentText = "";
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              segmentTranscript += event.results[i][0].transcript + " ";
+          for (let i = ev.resultIndex; i < ev.results.length; ++i) {
+            if (ev.results[i].isFinal) {
+              segmentTranscript += ev.results[i][0].transcript + " ";
             } else {
-              currentText = event.results[i][0].transcript;
+              currentText = ev.results[i][0].transcript;
             }
           }
           setTranscript((segmentTranscript + currentText).trim());
@@ -275,8 +315,8 @@ export default function RecordPage() {
           if (state === "RECORDING" && streamRef.current) {
             try {
               rec.start();
-            } catch (e) {
-              console.warn("Speech recognition restart failed:", e);
+            } catch {
+              console.warn("Speech recognition restart failed");
             }
           }
         };
@@ -305,7 +345,7 @@ export default function RecordPage() {
   };
 
   // Stop Recording
-  const handleStopRecording = () => {
+  function handleStopRecording() {
     const elapsed = 120 - timeLeft;
 
     // Reject short recordings under 10 seconds
@@ -526,7 +566,7 @@ export default function RecordPage() {
 
     // 5. Update Profile Points & Streaks and insert log in database atomically
     let awardPointsSuccess = false;
-    let originalProfile = profile ? { ...profile } : null;
+    const originalProfile = profile ? { ...profile } : null;
 
     if (profile) {
       const nextPoints = profile.totalPoints + POINTS.DAILY_CHECKIN;
@@ -589,15 +629,16 @@ export default function RecordPage() {
       } else {
         toast.success("Check-in saved!");
       }
-    } catch (dbError: any) {
-      console.error("Database save failed for entries:", dbError.message);
+    } catch (dbError) {
+      const err = dbError as { message?: string } | null;
+      console.error("Database save failed for entries:", err?.message || dbError);
       toast.error("Could not write daily check-in to database. Please check connection.");
       setState("REVIEW");
     }
   };
 
   // Reset page back to IDLE
-  const handleReset = () => {
+  function handleReset() {
     setAudioUrl(null);
     setAudioBlob(null);
     setTranscript("");

@@ -63,7 +63,10 @@ export default function HabitsPage() {
 
   useEffect(() => {
     if (user) {
-      fetchHabits();
+      const timer = setTimeout(() => {
+        fetchHabits();
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [user, fetchHabits]);
 

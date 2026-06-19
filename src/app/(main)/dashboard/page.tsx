@@ -40,6 +40,10 @@ function getGreeting(): string {
   return "Night owl mode 🦉";
 }
 
+function generateTempId(): string {
+  return "temp-" + Date.now();
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const { user } = useAuth();
@@ -148,7 +152,7 @@ export default function DashboardPage() {
       }
     } else {
       // Optimistic insert
-      const tempId = "temp-" + Date.now();
+      const tempId = generateTempId();
       const tempLog: HabitLog = {
         id: tempId,
         habit_id: habitId,
@@ -182,8 +186,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (user) {
-      fetchTodayCheckins();
-      fetchHabitsData();
+      const timer = setTimeout(() => {
+        fetchTodayCheckins();
+        fetchHabitsData();
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [user, fetchTodayCheckins, fetchHabitsData]);
 

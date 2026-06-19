@@ -98,7 +98,10 @@ export default function JournalPage() {
 
   useEffect(() => {
     if (showRecycleBin && user) {
-      fetchDeletedEntries();
+      const timer = setTimeout(() => {
+        fetchDeletedEntries();
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [showRecycleBin, user, fetchDeletedEntries]);
 
