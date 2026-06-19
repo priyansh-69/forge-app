@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/Button";
 import { APP } from "@/lib/constants";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserStore } from "@/stores/useUserStore";
+import { useVaultStore } from "@/stores/useVaultStore";
+import { encryptText } from "@/lib/crypto";
+import { saveLocalEntry } from "@/lib/indexedDb";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 
@@ -29,6 +32,24 @@ export default function SettingsPage() {
     setNotifications,
     setVoiceToneAnalysis,
   } = useUserStore();
+
+  const {
+    isVaultSetup,
+    isUnlocked,
+    vaultKey,
+    setupVault,
+    unlockVault,
+    unlockWithRecovery,
+    lockVault,
+  } = useVaultStore();
+
+  const [vaultPassword, setVaultPassword] = useState("");
+  const [recoveryPhraseInput, setRecoveryPhraseInput] = useState("");
+  const [newVaultPassword, setNewVaultPassword] = useState("");
+  const [showForgotForm, setShowForgotForm] = useState(false);
+  const [setupRecoveryPhrase, setSetupRecoveryPhrase] = useState("");
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+  const [migrating, setMigrating] = useState(false);
 
   const [exporting, setExporting] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -291,6 +312,310 @@ export default function SettingsPage() {
           </div>
         </Card>
       </div>
+
+      {/* Privacy & Security Vault */}
+      <div className="space-y-2">
+        <h3 className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider pl-1">
+          🔒 Privacy & Security Vault
+        </h3>
+        
+        {!isVaultSetup ? (
+          <Card className="space-y-4">
+            <div className="space-y-1">
+              <h4 className="text-sm font-semibold text-[var(--text-primary)]">
+                Setup Local Encryption
+              </h4>
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                Secure your journal entries and AI coach answers. This derives a local 256-bit AES key in your browser. All reflections are encrypted before syncing to Supabase.
+              </p>
+            </div>
+
+            <div className="space-y-3 pt-1">
+              <input
+                type="password"
+                placeholder="Choose Master Password (min. 6 chars)"
+                className="w-full bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-md)] px-3 py-2 text-xs text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--brand-primary)]"
+                value={vaultPassword}
+                onChange={(e) => setVaultPassword(e.target.value)}
+              />
+              <Button
+                variant="primary"
+                size="sm"
+                className="w-full cursor-pointer"
+                disabled={vaultPassword.length < 6}
+                onClick={async () => {
+                  try {
+                    const phrase = await setupVault(vaultPassword);
+                    setSetupRecoveryPhrase(phrase);
+                    setVaultPassword("");
+                    setShowRecoveryModal(true);
+                    toast.success("Vault setup successfully!");
+                  } catch (e) {
+                    toast.error("Failed to setup vault.");
+                  }
+                }}
+              >
+                Create Encrypted Vault
+              </Button>
+            </div>
+          </Card>
+        ) : !isUnlocked ? (
+          <Card className="space-y-4">
+            <div className="space-y-1">
+              <h4 className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
+                🔒 Vault is Locked
+              </h4>
+              <p className="text-xs text-[var(--text-secondary)]">
+                Unlock your vault with your master password to read, edit, or save encrypted entries.
+              </p>
+            </div>
+
+            {!showForgotForm ? (
+              <div className="space-y-3">
+                <input
+                  type="password"
+                  placeholder="Master Password"
+                  className="w-full bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-md)] px-3 py-2 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand-primary)]"
+                  value={vaultPassword}
+                  onChange={(e) => setVaultPassword(e.target.value)}
+                  onKeyDown={async (e) => {
+                    if (e.key === "Enter" && vaultPassword) {
+                      const success = await unlockVault(vaultPassword);
+                      if (success) {
+                        setVaultPassword("");
+                        toast.success("Vault unlocked!");
+                      } else {
+                        toast.error("Incorrect password.");
+                      }
+                    }
+                  }}
+                />
+                <div className="flex gap-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="flex-1 cursor-pointer text-xs"
+                    disabled={!vaultPassword}
+                    onClick={async () => {
+                      const success = await unlockVault(vaultPassword);
+                      if (success) {
+                        setVaultPassword("");
+                        toast.success("Vault unlocked!");
+                      } else {
+                        toast.error("Incorrect password.");
+                      }
+                    }}
+                  >
+                    Unlock Vault
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="cursor-pointer text-xs"
+                    onClick={() => setShowForgotForm(true)}
+                  >
+                    Forgot Password?
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-[10px] text-amber-500 font-medium leading-relaxed">
+                  ⚠️ Enter your emergency recovery key to reset your master password and restore access.
+                </p>
+                <input
+                  type="text"
+                  placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
+                  className="w-full bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--text-primary)] font-mono uppercase focus:outline-none focus:border-[var(--brand-primary)]"
+                  value={recoveryPhraseInput}
+                  onChange={(e) => setRecoveryPhraseInput(e.target.value)}
+                />
+                <input
+                  type="password"
+                  placeholder="Choose New Master Password (min. 6 chars)"
+                  className="w-full bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-md)] px-3 py-1.5 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand-primary)]"
+                  value={newVaultPassword}
+                  onChange={(e) => setNewVaultPassword(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="flex-1 cursor-pointer text-xs"
+                    disabled={recoveryPhraseInput.length < 24 || newVaultPassword.length < 6}
+                    onClick={async () => {
+                      const success = await unlockWithRecovery(recoveryPhraseInput, newVaultPassword);
+                      if (success) {
+                        setRecoveryPhraseInput("");
+                        setNewVaultPassword("");
+                        setShowForgotForm(false);
+                        toast.success("Vault password reset and unlocked!");
+                      } else {
+                        toast.error("Incorrect recovery key.");
+                      }
+                    }}
+                  >
+                    Reset & Unlock
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="cursor-pointer text-xs"
+                    onClick={() => setShowForgotForm(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Card>
+        ) : (
+          <Card className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-semibold text-emerald-400 flex items-center gap-1.5">
+                  🔓 Vault is Unlocked
+                </h4>
+                <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">
+                  Zero-Knowledge Client-Side AES-GCM Sync Active.
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="cursor-pointer text-xs border border-[var(--border-default)]"
+                onClick={() => {
+                  lockVault();
+                  toast.info("Vault locked securely.");
+                }}
+              >
+                Lock Vault
+              </Button>
+            </div>
+
+            <div className="border-t border-[var(--border-default)] pt-3.5 space-y-3">
+              <div className="space-y-1">
+                <h5 className="text-xs font-semibold text-[var(--text-primary)]">
+                  Migrate Legacy Entries
+                </h5>
+                <p className="text-[10px] text-[var(--text-secondary)] leading-relaxed">
+                  Have unencrypted entries from before vault activation? Sync and encrypt them client-side in one click.
+                </p>
+              </div>
+              <Button
+                variant="primary"
+                size="sm"
+                className="w-full cursor-pointer text-xs"
+                isLoading={migrating}
+                onClick={async () => {
+                  if (!user || !vaultKey) return;
+                  setMigrating(true);
+                  try {
+                    const { data: entries, error } = await supabase
+                      .from("entries")
+                      .select("*")
+                      .eq("user_id", user.id)
+                      .is("deleted_at", null);
+                    
+                    if (error) throw error;
+                    
+                    const legacy = (entries || []).filter(
+                      (e) => e.transcript && !e.transcript.startsWith("__ENCRYPTED__:")
+                    );
+                    
+                    if (legacy.length === 0) {
+                      toast.info("All journal entries are already encrypted!");
+                      setMigrating(false);
+                      return;
+                    }
+
+                    let successCount = 0;
+                    for (const entry of legacy) {
+                      const encryptedTitle = entry.title ? await encryptText(entry.title, vaultKey) : null;
+                      const encryptedTranscript = entry.transcript ? await encryptText(entry.transcript, vaultKey) : null;
+                      const encryptedAiResponse = entry.ai_response ? await encryptText(entry.ai_response, vaultKey) : null;
+                      
+                      const { error: updateErr } = await supabase
+                        .from("entries")
+                        .update({
+                          title: encryptedTitle,
+                          transcript: encryptedTranscript,
+                          ai_response: encryptedAiResponse,
+                        })
+                        .eq("id", entry.id);
+                      
+                      if (!updateErr) {
+                        successCount++;
+                        await saveLocalEntry({
+                          ...entry,
+                          title: encryptedTitle,
+                          transcript: encryptedTranscript,
+                          ai_response: encryptedAiResponse,
+                        });
+                      }
+                    }
+
+                    toast.success(`Successfully encrypted and migrated ${successCount} entries!`);
+                  } catch (err) {
+                    console.error("Migration error:", err);
+                    toast.error("Failed to migrate legacy entries.");
+                  } finally {
+                    setMigrating(false);
+                  }
+                }}
+              >
+                🔒 Encrypt Legacy Entries
+              </Button>
+            </div>
+          </Card>
+        )}
+      </div>
+
+      {/* Setup Recovery Key Modal */}
+      {showRecoveryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+          <Card className="w-full max-w-sm border border-[var(--border-default)] shadow-2xl p-5 space-y-4 bg-[var(--bg-primary)]">
+            <div className="text-center space-y-1">
+              <span className="text-3xl">🔑</span>
+              <h4 className="text-md font-bold text-[var(--text-primary)]">
+                Save Emergency Recovery Key
+              </h4>
+              <p className="text-[10px] text-amber-500 font-medium max-w-[280px] mx-auto leading-relaxed">
+                If you forget your master password, this recovery key is the ONLY way to unlock your journal. Write it down or save it somewhere safe.
+              </p>
+            </div>
+
+            <div className="bg-[var(--bg-secondary)] border border-[var(--border-default)] p-3 rounded-[var(--radius-md)] text-center font-mono font-bold text-sm tracking-wider text-[var(--brand-primary)] select-all">
+              {setupRecoveryPhrase}
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="flex-1 cursor-pointer text-xs"
+                onClick={() => {
+                  navigator.clipboard.writeText(setupRecoveryPhrase);
+                  toast.success("Recovery key copied to clipboard!");
+                }}
+              >
+                Copy Key
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                className="flex-1 cursor-pointer text-xs"
+                onClick={() => {
+                  setShowRecoveryModal(false);
+                  setSetupRecoveryPhrase("");
+                }}
+              >
+                Done
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Account & Safety */}
       <div className="space-y-2">

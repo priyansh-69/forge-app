@@ -12,6 +12,9 @@ import { createClient } from "@/lib/supabase/client";
 import { POINTS } from "@/lib/constants";
 import { playWarningTick, playAlarm, unlockAudioContext } from "@/lib/audio";
 import { toast } from "sonner";
+import { useVaultStore } from "@/stores/useVaultStore";
+import { encryptText } from "@/lib/crypto";
+import { saveLocalEntry, addToSyncQueue, getLocalEntries } from "@/lib/indexedDb";
 
 // ============================================================
 // Record Page — Daily 2-minute Audio Check-in
@@ -50,6 +53,7 @@ export default function RecordPage() {
   const router = useRouter();
   const { user } = useAuth();
   const { profile, setProfile, coachIntensity } = useUserStore();
+  const { isVaultSetup, isUnlocked, vaultKey } = useVaultStore();
 
   const [state, setState] = useState<RecordState>("IDLE");
   const [timeLeft, setTimeLeft] = useState(120); // 2 minutes in seconds
@@ -384,16 +388,24 @@ export default function RecordPage() {
     const longestStreakVal = profile?.longestStreak || 0;
 
     try {
-      // Get the latest check-in entry
-      const { data, error } = await supabase
-        .from("entries")
-        .select("created_at")
-        .eq("user_id", user.id)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false })
-        .limit(1);
+      let data;
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const { data: onlineData, error } = await supabase
+          .from("entries")
+          .select("created_at")
+          .eq("user_id", user.id)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(1);
 
-      if (error) throw error;
+        if (error) throw error;
+        data = onlineData;
+      } else {
+        const local = await getLocalEntries();
+        const activeLocal = local.filter((e) => !e.deleted_at);
+        activeLocal.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        data = activeLocal.slice(0, 1);
+      }
 
       const now = new Date();
       const toLocalDateString = (d: Date) => {
@@ -454,6 +466,10 @@ export default function RecordPage() {
       toast.error("You must be logged in.");
       return;
     }
+    if (isVaultSetup && (!isUnlocked || !vaultKey)) {
+      toast.error("Please unlock your Privacy Vault to record encrypted entries.");
+      return;
+    }
 
     setState("ANALYZING");
 
@@ -512,13 +528,22 @@ export default function RecordPage() {
       }
       // Check last 4 entries for tone scores to switch to Truth mode
       try {
-        const { data: lastEntries } = await supabase
-          .from("entries")
-          .select("tone_score")
-          .eq("user_id", user.id)
-          .is("deleted_at", null)
-          .order("created_at", { ascending: false })
-          .limit(4);
+        let lastEntries;
+        if (typeof navigator !== "undefined" && navigator.onLine) {
+          const { data } = await supabase
+            .from("entries")
+            .select("tone_score")
+            .eq("user_id", user.id)
+            .is("deleted_at", null)
+            .order("created_at", { ascending: false })
+            .limit(4);
+          lastEntries = data;
+        } else {
+          const local = await getLocalEntries();
+          const activeLocal = local.filter((e) => !e.deleted_at);
+          activeLocal.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+          lastEntries = activeLocal.slice(0, 4);
+        }
 
         if (lastEntries && lastEntries.length === 4) {
           const lowToneDays = lastEntries.filter((e) => e.tone_score !== null && e.tone_score <= 4).length;
@@ -540,20 +565,24 @@ export default function RecordPage() {
     };
 
     try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transcript: transcript.trim(),
-          aiMode: targetMode,
-          coachIntensity: coachIntensity || "standard",
-        }),
-      });
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transcript: transcript.trim(),
+            aiMode: targetMode,
+            coachIntensity: coachIntensity || "standard",
+          }),
+        });
 
-      if (res.ok) {
-        analysisData = await res.json();
+        if (res.ok) {
+          analysisData = await res.json();
+        } else {
+          console.error("Analyze route returned error status:", res.status);
+        }
       } else {
-        console.error("Analyze route returned error status:", res.status);
+        console.info("Offline: Skipped online AI analysis query.");
       }
     } catch (analysisErr) {
       console.error("API call to analyze check-in failed:", analysisErr);
@@ -578,50 +607,91 @@ export default function RecordPage() {
         longestStreak: streakResult.longestStreak,
       });
 
-      const [logResult, profileUpdateResult] = await Promise.all([
-        supabase.from("points_log").insert({
-          user_id: user.id,
-          action: "Daily Check-in",
-          points: POINTS.DAILY_CHECKIN,
-        }),
-        supabase
-          .from("profiles")
-          .update({
-            total_points: nextPoints,
-            current_streak: streakResult.currentStreak,
-            longest_streak: streakResult.longestStreak,
-          })
-          .eq("id", user.id),
-      ]);
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const [logResult, profileUpdateResult] = await Promise.all([
+          supabase.from("points_log").insert({
+            user_id: user.id,
+            action: "Daily Check-in",
+            points: POINTS.DAILY_CHECKIN,
+          }),
+          supabase
+            .from("profiles")
+            .update({
+              total_points: nextPoints,
+              current_streak: streakResult.currentStreak,
+              longest_streak: streakResult.longestStreak,
+            })
+            .eq("id", user.id),
+        ]);
 
-      if (logResult.error || profileUpdateResult.error) {
-        const errorMsg = logResult.error?.message || profileUpdateResult.error?.message || "Unknown error";
-        console.error("Failed to commit points log/profile updates in DB:", errorMsg);
-        // Rollback
-        if (originalProfile) setProfile(originalProfile);
-        toast.error("Check-in saved, but points and streak could not be updated.");
+        if (logResult.error || profileUpdateResult.error) {
+          const errorMsg = logResult.error?.message || profileUpdateResult.error?.message || "Unknown error";
+          console.error("Failed to commit points log/profile updates in DB:", errorMsg);
+          // Rollback
+          if (originalProfile) setProfile(originalProfile);
+          toast.error("Check-in saved, but points and streak could not be updated.");
+        } else {
+          setPointsAwarded(true);
+          awardPointsSuccess = true;
+        }
       } else {
         setPointsAwarded(true);
         awardPointsSuccess = true;
+        toast.info("Offline: Streak and points updated locally.");
       }
     }
 
     // 6. Insert new check-in row into public.entries
     try {
-      const { error: insertError } = await supabase.from("entries").insert({
+      let finalTitle = title.trim() || null;
+      let finalTranscript = transcript.trim();
+      let finalAiResponse = analysisData.aiResponse || null;
+
+      if (isVaultSetup) {
+        if (!isUnlocked || !vaultKey) {
+          toast.error("Please unlock your Privacy Vault to record encrypted entries.");
+          setState("REVIEW");
+          return;
+        }
+        finalTitle = finalTitle ? await encryptText(finalTitle, vaultKey) : null;
+        finalTranscript = await encryptText(finalTranscript, vaultKey);
+        finalAiResponse = finalAiResponse ? await encryptText(finalAiResponse, vaultKey) : null;
+      }
+
+      const entryId = typeof window !== "undefined" && window.crypto?.randomUUID 
+        ? window.crypto.randomUUID() 
+        : "entry-" + Date.now();
+
+      const entryPayload = {
+        id: entryId,
         user_id: user.id,
         audio_url: uploadedUrl,
-        transcript: transcript.trim(),
+        transcript: finalTranscript,
         tone_score: analysisData.toneScore,
         energy_level: analysisData.energyLevel,
         dominant_emotion: analysisData.dominantEmotion,
-        ai_response: analysisData.aiResponse,
+        ai_response: finalAiResponse,
         ai_mode: targetMode,
-        title: title.trim() || null,
+        title: finalTitle,
         day_rating: dayRating,
-      });
+        created_at: new Date().toISOString(),
+        deleted_at: null,
+      };
 
-      if (insertError) throw insertError;
+      // Save locally first
+      await saveLocalEntry(entryPayload);
+
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const { error: insertError } = await supabase.from("entries").insert(entryPayload);
+        if (insertError) {
+          console.warn("Supabase insert failed, queueing transaction:", insertError.message);
+          await addToSyncQueue("insert", "entries", entryId, entryPayload);
+          toast.info("Offline: Check-in saved locally.");
+        }
+      } else {
+        await addToSyncQueue("insert", "entries", entryId, entryPayload);
+        toast.info("Offline: Check-in saved locally.");
+      }
 
       setState("SUCCESS");
       if (awardPointsSuccess) {

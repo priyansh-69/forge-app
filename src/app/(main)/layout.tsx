@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { Header } from "@/components/layout/Header";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { useUserStore } from "@/stores/useUserStore";
+import { useVaultStore } from "@/stores/useVaultStore";
 import GlobalTimerOverlay from "@/components/timer/GlobalTimerOverlay";
 
 // ============================================================
@@ -31,6 +33,26 @@ export default function MainLayout({
   const { profile } = useUserStore();
   const points = profile?.totalPoints || 0;
 
+  const { initialize, syncQueueWithSupabase } = useVaultStore();
+
+  // Watch network status and initialize local db vault
+  useEffect(() => {
+    initialize();
+
+    const handleNetworkChange = () => {
+      // Re-trigger sync store to update offline state and sync if back online
+      syncQueueWithSupabase();
+    };
+
+    window.addEventListener("online", handleNetworkChange);
+    window.addEventListener("offline", handleNetworkChange);
+
+    return () => {
+      window.removeEventListener("online", handleNetworkChange);
+      window.removeEventListener("offline", handleNetworkChange);
+    };
+  }, [initialize, syncQueueWithSupabase]);
+
   return (
     <AuthGuard>
       <div className="flex flex-col min-h-screen">
@@ -53,3 +75,4 @@ export default function MainLayout({
     </AuthGuard>
   );
 }
+

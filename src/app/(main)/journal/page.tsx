@@ -6,6 +6,15 @@ import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { useVaultStore } from "@/stores/useVaultStore";
+import { encryptText, decryptText } from "@/lib/crypto";
+import { 
+  getLocalEntries, 
+  saveLocalEntry, 
+  saveLocalEntriesBulk, 
+  deleteLocalEntry, 
+  addToSyncQueue 
+} from "@/lib/indexedDb";
 
 const supabase = createClient();
 
@@ -24,64 +33,100 @@ interface DBEntry {
 export default function JournalPage() {
   const { user } = useAuth();
   const [entries, setEntries] = useState<DBEntry[]>([]);
+  const [decryptedEntries, setDecryptedEntries] = useState<DBEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  // Bug #24: Explicit error state separate from loading/empty
   const [fetchError, setFetchError] = useState<string | null>(null);
+  
   const [newEntry, setNewEntry] = useState("");
   const [newTitle, setNewTitle] = useState("");
-  // Bug #11: Day rating (1-5)
   const [dayRating, setDayRating] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
-  // Bug #10: Track expanded entries
+  
   const [expandedEntries, setExpandedEntries] = useState<Set<string>>(new Set());
-  // Bug #3: Editing state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [editTitle, setEditTitle] = useState("");
-  // Bug #3: Recycle bin toggle
+  
   const [showRecycleBin, setShowRecycleBin] = useState(false);
   const [deletedEntries, setDeletedEntries] = useState<DBEntry[]>([]);
+  const [decryptedDeletedEntries, setDecryptedDeletedEntries] = useState<DBEntry[]>([]);
+  
+  // Vault state
+  const { isVaultSetup, isUnlocked, vaultKey, unlockVault } = useVaultStore();
+  const [feedPassword, setFeedPassword] = useState("");
 
+  // Fetch entries (local-first fallback)
   const fetchEntries = useCallback(async () => {
     if (!user) return;
     try {
       setLoading(true);
-      setFetchError(null); // Bug #24: Reset error on retry
-      const { data, error } = await supabase
-        .from("entries")
-        .select("*")
-        .eq("user_id", user.id)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false });
+      setFetchError(null);
 
-      if (error) throw error;
-      setEntries(data || []);
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const { data, error } = await supabase
+          .from("entries")
+          .select("*")
+          .eq("user_id", user.id)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false });
+
+        if (error) throw error;
+        
+        setEntries(data || []);
+        // Save to local cache in background
+        if (data && data.length > 0) {
+          await saveLocalEntriesBulk(data);
+        }
+      } else {
+        // Fetch from local IndexedDB cache
+        const local = await getLocalEntries();
+        const activeLocal = local.filter((e) => !e.deleted_at);
+        // Sort descending by created_at
+        activeLocal.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        setEntries(activeLocal);
+        toast.info("Offline: Loaded from local cache.");
+      }
     } catch (err) {
       console.error("Error fetching entries:", err);
-      // Bug #24: Set error state instead of silently swallowing
-      setFetchError(err instanceof Error ? err.message : "Failed to load journal entries. Please try again.");
+      // Try local cache before showing error
+      const local = await getLocalEntries();
+      const activeLocal = local.filter((e) => !e.deleted_at);
+      if (activeLocal.length > 0) {
+        activeLocal.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        setEntries(activeLocal);
+        toast.info("Loaded from local cache.");
+      } else {
+        setFetchError(err instanceof Error ? err.message : "Failed to load journal entries. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
   }, [user]);
 
-  // Bug #3: Fetch soft-deleted entries for recycle bin
+  // Fetch deleted entries for recycle bin
   const fetchDeletedEntries = useCallback(async () => {
     if (!user) return;
     try {
-      const tenDaysAgo = new Date();
-      tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const tenDaysAgo = new Date();
+        tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
 
-      const { data, error } = await supabase
-        .from("entries")
-        .select("*")
-        .eq("user_id", user.id)
-        .not("deleted_at", "is", null)
-        .gte("deleted_at", tenDaysAgo.toISOString())
-        .order("deleted_at", { ascending: false });
+        const { data, error } = await supabase
+          .from("entries")
+          .select("*")
+          .eq("user_id", user.id)
+          .not("deleted_at", "is", null)
+          .gte("deleted_at", tenDaysAgo.toISOString())
+          .order("deleted_at", { ascending: false });
 
-      if (error) throw error;
-      setDeletedEntries(data || []);
+        if (error) throw error;
+        setDeletedEntries(data || []);
+      } else {
+        const local = await getLocalEntries();
+        const deletedLocal = local.filter((e) => !!e.deleted_at);
+        deletedLocal.sort((a, b) => new Date(b.deleted_at).getTime() - new Date(a.deleted_at).getTime());
+        setDeletedEntries(deletedLocal);
+      }
     } catch (err) {
       console.error("Error fetching deleted entries:", err);
     }
@@ -105,25 +150,115 @@ export default function JournalPage() {
     }
   }, [showRecycleBin, user, fetchDeletedEntries]);
 
+  // Reactive Decryption: Entries
+  useEffect(() => {
+    const decryptAll = async () => {
+      if (!isUnlocked || !vaultKey) {
+        setDecryptedEntries(entries);
+        return;
+      }
+      
+      const decrypted = await Promise.all(
+        entries.map(async (entry) => {
+          const decTitle = entry.title ? await decryptText(entry.title, vaultKey) : null;
+          const decTranscript = entry.transcript ? await decryptText(entry.transcript, vaultKey) : null;
+          const decAiResponse = entry.ai_response ? await decryptText(entry.ai_response, vaultKey) : null;
+          
+          return {
+            ...entry,
+            title: decTitle,
+            transcript: decTranscript,
+            ai_response: decAiResponse,
+          };
+        })
+      );
+      setDecryptedEntries(decrypted);
+    };
+
+    decryptAll();
+  }, [entries, isUnlocked, vaultKey]);
+
+  // Reactive Decryption: Deleted Entries
+  useEffect(() => {
+    const decryptAllDeleted = async () => {
+      if (!isUnlocked || !vaultKey) {
+        setDecryptedDeletedEntries(deletedEntries);
+        return;
+      }
+      
+      const decrypted = await Promise.all(
+        deletedEntries.map(async (entry) => {
+          const decTitle = entry.title ? await decryptText(entry.title, vaultKey) : null;
+          const decTranscript = entry.transcript ? await decryptText(entry.transcript, vaultKey) : null;
+          const decAiResponse = entry.ai_response ? await decryptText(entry.ai_response, vaultKey) : null;
+          
+          return {
+            ...entry,
+            title: decTitle,
+            transcript: decTranscript,
+            ai_response: decAiResponse,
+          };
+        })
+      );
+      setDecryptedDeletedEntries(decrypted);
+    };
+
+    decryptAllDeleted();
+  }, [deletedEntries, isUnlocked, vaultKey]);
+
   const handleSaveEntry = async () => {
     if (!newEntry.trim() || !user) return;
     
     setSaving(true);
+    const entryId = "entry-" + Date.now();
+
     try {
-      const { error } = await supabase.from("entries").insert({
+      let finalTitle = newTitle.trim() || null;
+      let finalTranscript = newEntry.trim();
+
+      if (isVaultSetup) {
+        if (!isUnlocked || !vaultKey) {
+          toast.error("Please unlock your Privacy Vault to write encrypted entries.");
+          setSaving(false);
+          return;
+        }
+        finalTitle = finalTitle ? await encryptText(finalTitle, vaultKey) : null;
+        finalTranscript = await encryptText(finalTranscript, vaultKey);
+      }
+
+      const payload = {
+        id: entryId,
         user_id: user.id,
-        transcript: newEntry.trim(),
-        title: newTitle.trim() || null,
+        transcript: finalTranscript,
+        title: finalTitle,
         day_rating: dayRating,
         ai_mode: "diary",
-      });
+        created_at: new Date().toISOString(),
+        deleted_at: null,
+      };
 
-      if (error) throw error;
+      // Save locally first (local-first)
+      await saveLocalEntry(payload);
+
+      // Attempt to save to Supabase
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const { error } = await supabase.from("entries").insert(payload);
+        if (error) {
+          console.warn("Supabase save failed offline fallback:", error.message);
+          await addToSyncQueue("insert", "entries", entryId, payload);
+          toast.info("Offline: Entry saved locally.");
+        } else {
+          toast.success("Journal entry saved successfully!");
+        }
+      } else {
+        await addToSyncQueue("insert", "entries", entryId, payload);
+        toast.info("Offline: Entry saved locally.");
+      }
+
       setNewEntry("");
       setNewTitle("");
       setDayRating(null);
       fetchEntries();
-      toast.success("Journal entry saved successfully!");
     } catch (err) {
       console.error("Error saving entry:", err);
       toast.error("Failed to save entry: " + (err instanceof Error ? err.message : "Unknown error"));
@@ -132,7 +267,6 @@ export default function JournalPage() {
     }
   };
 
-  // Bug #3: Inline editing
   const handleStartEdit = (entry: DBEntry) => {
     setEditingId(entry.id);
     setEditText(entry.transcript || "");
@@ -141,74 +275,152 @@ export default function JournalPage() {
 
   const handleSaveEdit = async (entryId: string) => {
     try {
-      const { error } = await supabase
-        .from("entries")
-        .update({
-          transcript: editText.trim(),
-          title: editTitle.trim() || null,
-        })
-        .eq("id", entryId);
+      let finalTitle = editTitle.trim() || null;
+      let finalTranscript = editText.trim();
 
-      if (error) throw error;
+      if (isVaultSetup) {
+        if (!isUnlocked || !vaultKey) {
+          toast.error("Please unlock your Privacy Vault to save changes.");
+          return;
+        }
+        finalTitle = finalTitle ? await encryptText(finalTitle, vaultKey) : null;
+        finalTranscript = await encryptText(finalTranscript, vaultKey);
+      }
+
+      // Fetch the full original entry to merge fields safely
+      const local = await getLocalEntries();
+      const original = local.find((e) => e.id === entryId) || {};
+      const payload = {
+        ...original,
+        transcript: finalTranscript,
+        title: finalTitle,
+      };
+
+      // Update local db
+      await saveLocalEntry(payload);
+
+      // Update Supabase
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const { error } = await supabase
+          .from("entries")
+          .update({
+            transcript: finalTranscript,
+            title: finalTitle,
+          })
+          .eq("id", entryId);
+
+        if (error) {
+          await addToSyncQueue("update", "entries", entryId, { transcript: finalTranscript, title: finalTitle });
+          toast.info("Offline: Changes saved locally.");
+        } else {
+          toast.success("Entry updated successfully!");
+        }
+      } else {
+        await addToSyncQueue("update", "entries", entryId, { transcript: finalTranscript, title: finalTitle });
+        toast.info("Offline: Changes saved locally.");
+      }
+
       setEditingId(null);
       fetchEntries();
-      toast.success("Entry updated successfully!");
     } catch (err) {
       toast.error("Failed to update entry: " + (err instanceof Error ? err.message : "Unknown error"));
     }
   };
 
-  // Bug #3: Soft delete
   const handleSoftDelete = async (entryId: string) => {
     try {
-      const { error } = await supabase
-        .from("entries")
-        .update({ deleted_at: new Date().toISOString() })
-        .eq("id", entryId);
+      const deletedAt = new Date().toISOString();
+      const local = await getLocalEntries();
+      const original = local.find((e) => e.id === entryId);
+      
+      if (original) {
+        await saveLocalEntry({ ...original, deleted_at: deletedAt });
+      }
 
-      if (error) throw error;
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const { error } = await supabase
+          .from("entries")
+          .update({ deleted_at: deletedAt })
+          .eq("id", entryId);
+
+        if (error) {
+          await addToSyncQueue("update", "entries", entryId, { deleted_at: deletedAt });
+          toast.info("Offline: Saved deletion locally.");
+        } else {
+          toast.success("Entry moved to recycle bin.");
+        }
+      } else {
+        await addToSyncQueue("update", "entries", entryId, { deleted_at: deletedAt });
+        toast.info("Offline: Saved deletion locally.");
+      }
+
       fetchEntries();
-      toast.success("Entry moved to recycle bin. It will be permanently deleted after 10 days.");
     } catch (err) {
       toast.error("Failed to delete entry: " + (err instanceof Error ? err.message : "Unknown error"));
     }
   };
 
-  // Bug #3: Restore from recycle bin
   const handleRestore = async (entryId: string) => {
     try {
-      const { error } = await supabase
-        .from("entries")
-        .update({ deleted_at: null })
-        .eq("id", entryId);
+      const local = await getLocalEntries();
+      const original = local.find((e) => e.id === entryId);
+      
+      if (original) {
+        await saveLocalEntry({ ...original, deleted_at: null });
+      }
 
-      if (error) throw error;
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const { error } = await supabase
+          .from("entries")
+          .update({ deleted_at: null })
+          .eq("id", entryId);
+
+        if (error) {
+          await addToSyncQueue("update", "entries", entryId, { deleted_at: null });
+          toast.info("Offline: Restored locally.");
+        } else {
+          toast.success("Entry restored successfully!");
+        }
+      } else {
+        await addToSyncQueue("update", "entries", entryId, { deleted_at: null });
+        toast.info("Offline: Restored locally.");
+      }
+
       fetchDeletedEntries();
       fetchEntries();
-      toast.success("Entry restored successfully!");
     } catch (err) {
       toast.error("Failed to restore entry: " + (err instanceof Error ? err.message : "Unknown error"));
     }
   };
 
-  // Bug #3: Permanent delete
   const handlePermanentDelete = async (entryId: string) => {
     if (!confirm("Permanently delete this entry? This cannot be undone.")) return;
     try {
-      const { error } = await supabase
-        .from("entries")
-        .delete()
-        .eq("id", entryId);
+      await deleteLocalEntry(entryId);
 
-      if (error) throw error;
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        const { error } = await supabase
+          .from("entries")
+          .delete()
+          .eq("id", entryId);
+
+        if (error) {
+          await addToSyncQueue("delete", "entries", entryId, null);
+          toast.info("Offline: Deleted permanently locally.");
+        } else {
+          toast.success("Entry permanently deleted.");
+        }
+      } else {
+        await addToSyncQueue("delete", "entries", entryId, null);
+        toast.info("Offline: Deleted permanently locally.");
+      }
+
       fetchDeletedEntries();
-      toast.success("Entry permanently deleted.");
     } catch (err) {
       toast.error("Failed to delete entry: " + (err instanceof Error ? err.message : "Unknown error"));
     }
   };
 
-  // Bug #10: Toggle expanded entry
   const toggleExpanded = (id: string) => {
     setExpandedEntries((prev) => {
       const next = new Set(prev);
@@ -221,7 +433,6 @@ export default function JournalPage() {
     });
   };
 
-  // Bug #11: Rating emojis
   const ratingEmojis = ["😞", "😐", "🙂", "😊", "🔥"];
 
   return (
@@ -235,8 +446,57 @@ export default function JournalPage() {
         </p>
       </div>
 
+      {/* In-line unlock banner if Vault is Locked */}
+      {isVaultSetup && !isUnlocked && (
+        <Card variant="glass" className="border-amber-500/20 bg-amber-500/5 p-3 flex flex-col md:flex-row items-center justify-between gap-3 mb-4 animate-fade-in">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🔒</span>
+            <div className="text-left">
+              <h4 className="text-xs font-bold text-[var(--text-primary)]">Journal is Encrypted</h4>
+              <p className="text-[10px] text-[var(--text-secondary)]">Enter master password to unlock and read your entries.</p>
+            </div>
+          </div>
+          <div className="flex gap-2 w-full md:w-auto">
+            <input
+              type="password"
+              placeholder="Password"
+              className="flex-1 md:w-32 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-md)] px-2.5 py-1 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand-primary)]"
+              value={feedPassword}
+              onChange={(e) => setFeedPassword(e.target.value)}
+              onKeyDown={async (e) => {
+                if (e.key === "Enter" && feedPassword) {
+                  const success = await unlockVault(feedPassword);
+                  if (success) {
+                    setFeedPassword("");
+                    toast.success("Journal unlocked!");
+                  } else {
+                    toast.error("Incorrect password.");
+                  }
+                }
+              }}
+            />
+            <Button
+              variant="primary"
+              size="sm"
+              className="cursor-pointer text-xs py-1"
+              disabled={!feedPassword}
+              onClick={async () => {
+                const success = await unlockVault(feedPassword);
+                if (success) {
+                  setFeedPassword("");
+                  toast.success("Journal unlocked!");
+                } else {
+                  toast.error("Incorrect password.");
+                }
+              }}
+            >
+              Unlock
+            </Button>
+          </div>
+        </Card>
+      )}
+
       <Card className="space-y-3">
-        {/* Bug #11: Title input */}
         <input
           type="text"
           className="w-full bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-md)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--brand-primary)]"
@@ -247,12 +507,11 @@ export default function JournalPage() {
         />
         <textarea
           className="w-full bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-md)] p-3 text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--brand-primary)] resize-none h-24"
-          placeholder="How was your day? What's on your mind?"
+          placeholder={isVaultSetup && !isUnlocked ? "Unlock vault to start writing encrypted entries..." : "How was your day? What's on your mind?"}
           value={newEntry}
           onChange={(e) => setNewEntry(e.target.value)}
-          disabled={saving}
+          disabled={saving || (isVaultSetup && !isUnlocked)}
         />
-        {/* Bug #11: Day rating */}
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-[var(--text-secondary)]">Rate your day:</span>
           <div className="flex gap-1">
@@ -260,6 +519,7 @@ export default function JournalPage() {
               <button
                 key={idx}
                 onClick={() => setDayRating(dayRating === idx + 1 ? null : idx + 1)}
+                disabled={saving || (isVaultSetup && !isUnlocked)}
                 className={`text-xl p-1 rounded-[var(--radius-sm)] transition-all duration-200 cursor-pointer ${
                   dayRating === idx + 1
                     ? "bg-[var(--brand-primary)]/20 scale-125 ring-1 ring-[var(--brand-primary)]"
@@ -277,7 +537,7 @@ export default function JournalPage() {
           <Button 
             onClick={handleSaveEntry} 
             isLoading={saving} 
-            disabled={!newEntry.trim() || saving}
+            disabled={!newEntry.trim() || saving || (isVaultSetup && !isUnlocked)}
             size="sm"
           >
             Save Entry
@@ -285,7 +545,6 @@ export default function JournalPage() {
         </div>
       </Card>
 
-      {/* Bug #3: Recycle bin toggle */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider">
           {showRecycleBin ? "Recycle Bin" : "Entries"}
@@ -300,8 +559,7 @@ export default function JournalPage() {
 
       <div className="space-y-4">
         {showRecycleBin ? (
-          // Bug #3: Recycle bin view
-          deletedEntries.length === 0 ? (
+          decryptedDeletedEntries.length === 0 ? (
             <Card className="flex flex-col items-center justify-center py-12 text-center">
               <span className="text-4xl mb-3">🗑️</span>
               <h3 className="text-sm font-semibold text-[var(--text-primary)]">
@@ -312,38 +570,48 @@ export default function JournalPage() {
               </p>
             </Card>
           ) : (
-            deletedEntries.map((entry) => (
-              <Card key={entry.id} className="space-y-2 opacity-75">
-                <div className="flex justify-between items-center text-xs text-[var(--text-muted)]">
-                  <span>Deleted {entry.deleted_at ? new Date(entry.deleted_at).toLocaleDateString() : ""}</span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleRestore(entry.id)}
-                      className="text-xs font-medium text-[var(--brand-primary)] hover:underline cursor-pointer"
-                    >
-                      Restore
-                    </button>
-                    <button
-                      onClick={() => handlePermanentDelete(entry.id)}
-                      className="text-xs font-medium text-red-400 hover:underline cursor-pointer"
-                    >
-                      Delete Forever
-                    </button>
+            decryptedDeletedEntries.map((entry) => {
+              const isEncrypted = entry.transcript?.startsWith("__ENCRYPTED__:");
+              return (
+                <Card key={entry.id} className="space-y-2 opacity-75">
+                  <div className="flex justify-between items-center text-xs text-[var(--text-muted)]">
+                    <span>Deleted {entry.deleted_at ? new Date(entry.deleted_at).toLocaleDateString() : ""}</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleRestore(entry.id)}
+                        className="text-xs font-medium text-[var(--brand-primary)] hover:underline cursor-pointer"
+                      >
+                        Restore
+                      </button>
+                      <button
+                        onClick={() => handlePermanentDelete(entry.id)}
+                        className="text-xs font-medium text-red-400 hover:underline cursor-pointer"
+                      >
+                        Delete Forever
+                      </button>
+                    </div>
                   </div>
-                </div>
-                {entry.title && (
-                  <h4 className="text-sm font-semibold text-[var(--text-primary)]">{entry.title}</h4>
-                )}
-                <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed line-clamp-3">
-                  {entry.transcript || "No text content."}
-                </p>
-              </Card>
-            ))
+                  {isEncrypted && !isUnlocked ? (
+                    <div className="text-sm text-[var(--text-muted)] italic">
+                      [Encrypted Vault Locked 🔒]
+                    </div>
+                  ) : (
+                    <>
+                      {entry.title && (
+                        <h4 className="text-sm font-semibold text-[var(--text-primary)]">{entry.title}</h4>
+                      )}
+                      <p className="text-sm text-[var(--text-secondary)] whitespace-pre-wrap leading-relaxed line-clamp-3">
+                        {entry.transcript || "No text content."}
+                      </p>
+                    </>
+                  )}
+                </Card>
+              );
+            })
           )
         ) : loading ? (
           <div className="text-center text-sm text-[var(--text-muted)] py-8">Loading entries...</div>
         ) : fetchError ? (
-          // Bug #24: Distinct error state — not confused with empty state
           <Card className="flex flex-col items-center justify-center py-12 text-center space-y-3">
             <span className="text-4xl mb-1">⚠️</span>
             <h3 className="text-sm font-semibold text-red-400">
@@ -361,7 +629,7 @@ export default function JournalPage() {
               Retry
             </Button>
           </Card>
-        ) : entries.length === 0 ? (
+        ) : decryptedEntries.length === 0 ? (
           <Card className="flex flex-col items-center justify-center py-12 text-center">
             <span className="text-4xl mb-3">📖</span>
             <h3 className="text-sm font-semibold text-[var(--text-primary)]">
@@ -372,125 +640,127 @@ export default function JournalPage() {
             </p>
           </Card>
         ) : (
-          entries.map((entry) => (
-            <Card key={entry.id} className="space-y-2">
-              <div className="flex justify-between items-center text-xs text-[var(--text-muted)]">
-                <div className="flex items-center gap-2">
-                  <span>{new Date(entry.created_at).toLocaleDateString()} {new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                  {/* Bug #11: Show day rating */}
-                  {entry.day_rating && (
-                    <span className="text-sm" title={`Day rating: ${entry.day_rating}/5`}>
-                      {ratingEmojis[entry.day_rating - 1]}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {entry.ai_mode === 'diary' ? <span>📝 Diary</span> : <span>🎙️ Check-in</span>}
-                  {/* Bug #3: Edit and delete buttons */}
-                  {editingId !== entry.id && (
-                    <>
-                      <button
-                        onClick={() => handleStartEdit(entry)}
-                        className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
-                        title="Edit entry"
-                      >
-                        ✏️
-                      </button>
-                      <button
-                        onClick={() => handleSoftDelete(entry.id)}
-                        className="text-[var(--text-secondary)] hover:text-red-400 transition-colors cursor-pointer"
-                        title="Delete entry"
-                      >
-                        🗑️
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Bug #11: Show title */}
-              {editingId === entry.id ? (
-                // Bug #3: Inline editing mode
-                <div className="space-y-2">
-                  <input
-                    type="text"
-                    className="w-full bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-sm)] px-2 py-1 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand-primary)]"
-                    placeholder="Title (optional)"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                  />
-                  <textarea
-                    className="w-full bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-sm)] p-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand-primary)] resize-none h-24"
-                    value={editText}
-                    onChange={(e) => setEditText(e.target.value)}
-                  />
-                  <div className="flex gap-2 justify-end">
-                    <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
-                      Cancel
-                    </Button>
-                    <Button size="sm" onClick={() => handleSaveEdit(entry.id)}>
-                      Save
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {entry.title && (
-                    <h4 className="text-sm font-semibold text-[var(--text-primary)]">{entry.title}</h4>
-                  )}
-                  {/* Bug #10: Truncate long entries */}
-                  <div className="relative">
-                    <p
-                      className={`text-sm text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed ${
-                        !expandedEntries.has(entry.id) ? "max-h-32 overflow-hidden" : ""
-                      }`}
-                    >
-                      {entry.transcript || "No text content."}
-                    </p>
-                    {/* Gradient fade for truncated content */}
-                    {!expandedEntries.has(entry.id) && entry.transcript && entry.transcript.length > 300 && (
-                      <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[var(--bg-secondary)] to-transparent" />
+          decryptedEntries.map((entry) => {
+            const isEncrypted = entry.transcript?.startsWith("__ENCRYPTED__:");
+            
+            return (
+              <Card key={entry.id} className="space-y-2">
+                <div className="flex justify-between items-center text-xs text-[var(--text-muted)]">
+                  <div className="flex items-center gap-2">
+                    <span>{new Date(entry.created_at).toLocaleDateString()} {new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    {entry.day_rating && (
+                      <span className="text-sm" title={`Day rating: ${entry.day_rating}/5`}>
+                        {ratingEmojis[entry.day_rating - 1]}
+                      </span>
                     )}
                   </div>
-                  {entry.transcript && entry.transcript.length > 300 && (
-                    <button
-                      onClick={() => toggleExpanded(entry.id)}
-                      className="text-xs font-medium text-[var(--brand-primary)] hover:underline cursor-pointer"
-                    >
-                      {expandedEntries.has(entry.id) ? "Read Less" : "Read More"}
-                    </button>
-                  )}
-                  {entry.audio_url && (
-                    <div className="mt-2.5">
-                      {entry.audio_url.includes("video") || entry.audio_url.endsWith(".mp4") || entry.audio_url.includes("webm") ? (
-                        <video
-                          src={entry.audio_url}
-                          controls
-                          playsInline
-                          className="w-full max-h-48 rounded-[var(--radius-sm)] border border-[rgba(255,255,255,0.06)] bg-black"
-                        />
-                      ) : (
-                        <audio
-                          src={entry.audio_url}
-                          controls
-                          className="w-full focus:outline-none"
-                        />
+                  <div className="flex items-center gap-2">
+                    {entry.ai_mode === 'diary' ? <span>📝 Diary</span> : <span>🎙️ Check-in</span>}
+                    {editingId !== entry.id && !showRecycleBin && (!isEncrypted || isUnlocked) && (
+                      <>
+                        <button
+                          onClick={() => handleStartEdit(entry)}
+                          className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                          title="Edit entry"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          onClick={() => handleSoftDelete(entry.id)}
+                          className="text-[var(--text-secondary)] hover:text-red-400 transition-colors cursor-pointer"
+                          title="Delete entry"
+                        >
+                          🗑️
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {isEncrypted && !isUnlocked ? (
+                  <div className="py-2 flex items-center justify-between text-xs text-[var(--text-muted)] bg-[rgba(255,255,255,0.01)] border border-[rgba(255,255,255,0.03)] px-3 rounded-[var(--radius-sm)] italic select-none">
+                    <span>[Encrypted Vault Locked 🔒]</span>
+                    <span className="text-[10px] text-[var(--text-muted)]">Unlock to read</span>
+                  </div>
+                ) : editingId === entry.id ? (
+                  <div className="space-y-2 animate-fade-in">
+                    <input
+                      type="text"
+                      className="w-full bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-sm)] px-2 py-1 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand-primary)]"
+                      placeholder="Title (optional)"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                    />
+                    <textarea
+                      className="w-full bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-sm)] p-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--brand-primary)] resize-none h-24"
+                      value={editText}
+                      onChange={(e) => setEditText(e.target.value)}
+                    />
+                    <div className="flex gap-2 justify-end">
+                      <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                        Cancel
+                      </Button>
+                      <Button size="sm" onClick={() => handleSaveEdit(entry.id)}>
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {entry.title && (
+                      <h4 className="text-sm font-semibold text-[var(--text-primary)]">{entry.title}</h4>
+                    )}
+                    <div className="relative">
+                      <p
+                        className={`text-sm text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed ${
+                          !expandedEntries.has(entry.id) ? "max-h-32 overflow-hidden" : ""
+                        }`}
+                      >
+                        {entry.transcript || "No text content."}
+                      </p>
+                      {!expandedEntries.has(entry.id) && entry.transcript && entry.transcript.length > 300 && (
+                        <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[var(--bg-secondary)] to-transparent" />
                       )}
                     </div>
-                  )}
-                </>
-              )}
-              {entry.ai_response && (
-                <div className="mt-3 p-3 bg-[var(--bg-tertiary)] rounded-[var(--radius-sm)] border-l-2 border-[var(--brand-primary)]">
-                  <p className="text-xs font-semibold text-[var(--brand-primary)] mb-1">AI Coach</p>
-                  <p className="text-sm text-[var(--text-secondary)] italic">&quot;{entry.ai_response}&quot;</p>
-                </div>
-              )}
-            </Card>
-          ))
+                    {entry.transcript && entry.transcript.length > 300 && (
+                      <button
+                        onClick={() => toggleExpanded(entry.id)}
+                        className="text-xs font-medium text-[var(--brand-primary)] hover:underline cursor-pointer"
+                      >
+                        {expandedEntries.has(entry.id) ? "Read Less" : "Read More"}
+                      </button>
+                    )}
+                    {entry.audio_url && (
+                      <div className="mt-2.5">
+                        {entry.audio_url.includes("video") || entry.audio_url.endsWith(".mp4") || entry.audio_url.includes("webm") ? (
+                          <video
+                            src={entry.audio_url}
+                            controls
+                            playsInline
+                            className="w-full max-h-48 rounded-[var(--radius-sm)] border border-[rgba(255,255,255,0.06)] bg-black"
+                          />
+                        ) : (
+                          <audio
+                            src={entry.audio_url}
+                            controls
+                            className="w-full focus:outline-none"
+                          />
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+                {entry.ai_response && (!isEncrypted || isUnlocked) && (
+                  <div className="mt-3 p-3 bg-[var(--bg-tertiary)] rounded-[var(--radius-sm)] border-l-2 border-[var(--brand-primary)]">
+                    <p className="text-xs font-semibold text-[var(--brand-primary)] mb-1">AI Coach</p>
+                    <p className="text-sm text-[var(--text-secondary)] italic">&quot;{entry.ai_response}&quot;</p>
+                  </div>
+                )}
+              </Card>
+            );
+          })
         )}
       </div>
     </div>
   );
 }
-
