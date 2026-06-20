@@ -19,6 +19,7 @@ const pageTitles: Record<string, string> = {
   "/dashboard": "FORGE",
   "/record": "Check In",
   "/journal": "Journal",
+  "/palace": "Mind Palace",
   "/timer": "Focus",
   "/settings": "Settings",
 };
