@@ -26,6 +26,7 @@ interface AnalysisResult {
   toneScore: number;
   energyLevel: number;
   dominantEmotion: string;
+  themes: string[];
   aiResponse: string;
 }
 
@@ -561,6 +562,7 @@ export default function RecordPage() {
       toneScore: 5,
       energyLevel: 5,
       dominantEmotion: "neutral",
+      themes: [],
       aiResponse: "Check-in logged successfully.",
     };
 
@@ -672,6 +674,9 @@ export default function RecordPage() {
         dominant_emotion: analysisData.dominantEmotion,
         ai_response: finalAiResponse,
         ai_mode: targetMode,
+        cbt_data: {
+          themes: analysisData.themes || []
+        },
         title: finalTitle,
         day_rating: dayRating,
         created_at: new Date().toISOString(),
