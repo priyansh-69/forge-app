@@ -49,6 +49,7 @@ Schema:
   "toneScore": number (1 to 10, where 1 is depressed/flat and 10 is ecstatic/highly positive),
   "energyLevel": number (1 to 10, where 1 is exhausted/tired and 10 is high energy/passionate),
   "dominantEmotion": "determined" | "calm" | "anxious" | "frustrated" | "joyful" | "low" | "neutral",
+  "themes": string[] (1 to 4 lowercase keywords, e.g. ["work", "sleep", "caffeine"]),
   "aiResponse": string (the personalized coaching message)
 }`,
                     },
@@ -66,9 +67,14 @@ Schema:
                       type: "STRING",
                       enum: ["determined", "calm", "anxious", "frustrated", "joyful", "low", "neutral"],
                     },
+                    themes: {
+                      type: "ARRAY",
+                      items: { type: "STRING" },
+                      description: "1 to 4 core themes/topics mentioned (e.g. work, caffeine, health, sleep, family, friends, money, meditation, hobbies)"
+                    },
                     aiResponse: { type: "STRING" },
                   },
-                  required: ["toneScore", "energyLevel", "dominantEmotion", "aiResponse"],
+                  required: ["toneScore", "energyLevel", "dominantEmotion", "themes", "aiResponse"],
                 },
               },
             }),
@@ -187,6 +193,30 @@ function analyzeLocally(text: string, mode: string, intensity: string) {
     energyLevel = Math.max(1, energyLevel - 1);
   }
 
+  // Extract themes
+  const themeKeywords: Record<string, string[]> = {
+    work: ["job", "work", "career", "study", "exam", "task", "project", "office"],
+    caffeine: ["coffee", "caffeine", "tea", "espresso", "energy drink"],
+    health: ["gym", "workout", "fitness", "run", "diet", "exercise", "walk", "yoga"],
+    sleep: ["sleep", "bed", "night", "tired", "fatigue", "rest", "insomnia"],
+    family: ["family", "parent", "dad", "mom", "brother", "sister", "wife", "husband", "kid"],
+    friends: ["friend", "friends", "social", "party", "hangout", "chat"],
+    money: ["money", "buy", "pay", "cost", "rent", "finance", "budget"],
+    meditation: ["meditate", "meditation", "mindfulness", "breath", "calm"],
+    hobbies: ["game", "movie", "book", "music", "hobby", "creative", "write", "paint"],
+  };
+
+  const extractedThemes: string[] = [];
+  for (const [theme, words] of Object.entries(themeKeywords)) {
+    for (const word of words) {
+      if (normalized.includes(word)) {
+        extractedThemes.push(theme);
+        break; // match once per theme
+      }
+    }
+  }
+  const themes = extractedThemes.slice(0, 4);
+
   // Generate coaching response
   let aiResponse = "";
   if (intensity === "silent") {
@@ -250,6 +280,7 @@ function analyzeLocally(text: string, mode: string, intensity: string) {
     toneScore,
     energyLevel,
     dominantEmotion,
+    themes,
     aiResponse,
   };
 }
