@@ -2,6 +2,8 @@
 
 import { Badge } from "@/components/ui/Badge";
 import Image from "next/image";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useVaultStore } from "@/stores/useVaultStore";
 
 // ============================================================
@@ -15,6 +17,7 @@ interface HeaderProps {
 }
 
 export function Header({ title, points = 0 }: HeaderProps) {
+  const pathname = usePathname();
   const { syncStatus, pendingSyncCount } = useVaultStore();
 
   return (
@@ -35,6 +38,26 @@ export function Header({ title, points = 0 }: HeaderProps) {
 
         {/* Sync & Points */}
         <div className="flex items-center gap-2">
+          {/* Mind Palace Shortcut */}
+          <Link
+            href={pathname === "/palace" ? "/dashboard" : "/palace"}
+            className="flex items-center justify-center p-1.5 rounded-full hover:bg-[rgba(255,255,255,0.06)] transition-all text-[var(--text-secondary)] hover:text-[var(--text-primary)] mr-1"
+            title={pathname === "/palace" ? "Back to Dashboard" : "Go to Mind Palace"}
+          >
+            {pathname === "/palace" ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                <polyline points="9 22 9 12 15 12 15 22" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
+              </svg>
+            )}
+          </Link>
+
           {/* Sync indicator */}
           {syncStatus !== "synced" && (
             <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-wider border select-none transition-all ${
