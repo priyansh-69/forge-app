@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { ShieldModeOverlay } from "@/components/features/ShieldModeOverlay";
+import { AuthGuard } from "@/components/layout/AuthGuard";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { Header } from "@/components/layout/Header";
-import { AuthGuard } from "@/components/layout/AuthGuard";
+import GlobalTimerOverlay from "@/components/timer/GlobalTimerOverlay";
+import { getLocalEntries, initDB } from "@/lib/indexedDb";
 import { useUserStore } from "@/stores/useUserStore";
 import { useVaultStore } from "@/stores/useVaultStore";
-import GlobalTimerOverlay from "@/components/timer/GlobalTimerOverlay";
+import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 
 // ============================================================
 // Main Layout — Protected app shell with Header + BottomNav
@@ -20,6 +22,7 @@ const pageTitles: Record<string, string> = {
   "/record": "Check In",
   "/journal": "Journal",
   "/palace": "Mind Palace",
+  "/shield": "Shield",
   "/timer": "Focus",
   "/settings": "Settings",
 };
@@ -48,6 +51,43 @@ export default function MainLayout({
     window.addEventListener("online", handleNetworkChange);
     window.addEventListener("offline", handleNetworkChange);
 
+    // Temporary developer script to clear stuck queue and delete last 3 entries
+    const clearStuckQueue = async () => {
+      try {
+        const db = await initDB();
+        
+        // 1. Clear the sync queue
+        const tx1 = db.transaction("sync_queue", "readwrite");
+        await new Promise<void>((resolve, reject) => {
+          const req = tx1.objectStore("sync_queue").clear();
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+        });
+
+        // 2. Delete last 3 entries from local cache
+        const local = await getLocalEntries();
+        if (local.length > 0) {
+          local.sort((a, b) => new Date(b.created_at || b.createdAt).getTime() - new Date(a.created_at || a.createdAt).getTime());
+          const last3 = local.slice(0, 3);
+          
+          const tx2 = db.transaction("entries", "readwrite");
+          const store = tx2.objectStore("entries");
+          last3.forEach(e => {
+            store.delete(e.id);
+          });
+        }
+
+        console.log("Stuck sync queue cleared and last 3 entries deleted locally.");
+        
+        // Re-initialize store to update the UI badges
+        initialize();
+      } catch (err) {
+        console.error("Failed to clear stuck queue:", err);
+      }
+    };
+
+    clearStuckQueue();
+
     return () => {
       window.removeEventListener("online", handleNetworkChange);
       window.removeEventListener("offline", handleNetworkChange);
@@ -72,6 +112,7 @@ export default function MainLayout({
 
         <BottomNav />
         <GlobalTimerOverlay />
+        <ShieldModeOverlay />
       </div>
     </AuthGuard>
   );

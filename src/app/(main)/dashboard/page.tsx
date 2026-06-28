@@ -10,6 +10,9 @@ import { useTimerStore } from "@/stores/useTimerStore";
 import { useAuth } from "@/hooks/useAuth";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { BurnoutShieldCard } from "@/components/features/BurnoutShieldCard";
+import { getLocalEntries, addToSyncQueue } from "@/lib/indexedDb";
+import { generateUUID } from "@/lib/uuid";
 
 // ============================================================
 // Dashboard Page — Life metrics overview (Bug #5: Wired to real data)
@@ -41,7 +44,7 @@ function getGreeting(): string {
 }
 
 function generateTempId(): string {
-  return "temp-" + Date.now();
+  return generateUUID();
 }
 
 export default function DashboardPage() {
@@ -64,12 +67,23 @@ export default function DashboardPage() {
         .reduce((acc, s) => acc + s.duration, 0) / 3600
     : 0;
 
-  // Fetch today's check-in count from Supabase
+  // Fetch today's check-in count from Supabase (with offline fallback)
   const fetchTodayCheckins = useCallback(async () => {
     if (!user) return;
     try {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
+
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        const local = await getLocalEntries();
+        const activeLocal = local.filter((e) => !e.deleted_at);
+        const count = activeLocal.filter(
+          (e) => new Date(e.created_at || e.createdAt) >= todayStart
+        ).length;
+        setTodayCheckinCount(count);
+        setHasCheckedInToday(count > 0);
+        return;
+      }
 
       const { data, error } = await supabase
         .from("entries")
@@ -87,13 +101,24 @@ export default function DashboardPage() {
     }
   }, [user]);
 
-  // Fetch all user habits and today's completions
+  // Fetch all user habits and today's completions (with offline fallback)
   const fetchHabitsData = useCallback(async () => {
     if (!user) return;
     try {
       setHabitsLoading(true);
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
+
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        // Load from localStorage cache
+        if (typeof window !== "undefined") {
+          const cachedHabits = localStorage.getItem(`forge_habits_${user.id}`);
+          const cachedLogs = localStorage.getItem(`forge_habit_logs_${user.id}`);
+          if (cachedHabits) setHabits(JSON.parse(cachedHabits));
+          if (cachedLogs) setHabitLogs(JSON.parse(cachedLogs));
+        }
+        return;
+      }
 
       const [habitsRes, logsRes] = await Promise.all([
         supabase
@@ -111,8 +136,17 @@ export default function DashboardPage() {
       if (habitsRes.error) throw habitsRes.error;
       if (logsRes.error) throw logsRes.error;
 
-      setHabits(habitsRes.data || []);
-      setHabitLogs(logsRes.data || []);
+      const habitsData = habitsRes.data || [];
+      const logsData = logsRes.data || [];
+
+      setHabits(habitsData);
+      setHabitLogs(logsData);
+
+      // Save to localStorage cache
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`forge_habits_${user.id}`, JSON.stringify(habitsData));
+        localStorage.setItem(`forge_habit_logs_${user.id}`, JSON.stringify(logsData));
+      }
     } catch (err) {
       console.error("Error fetching habits data:", err);
       toast.error("Failed to load habits.");
@@ -121,7 +155,7 @@ export default function DashboardPage() {
     }
   }, [user]);
 
-  // Toggle habit log completion (optimistic update)
+  // Toggle habit log completion (optimistic update with offline support)
   const handleToggleHabit = async (habitId: string, habitName: string) => {
     if (!user) return;
 
@@ -132,9 +166,21 @@ export default function DashboardPage() {
       (log) => log.habit_id === habitId && new Date(log.completed_at) >= todayStart
     );
 
+    const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+
     if (existingLog) {
       // Optimistic delete
-      setHabitLogs((prev) => prev.filter((log) => log.id !== existingLog.id));
+      const updatedLogs = habitLogs.filter((log) => log.id !== existingLog.id);
+      setHabitLogs(updatedLogs);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`forge_habit_logs_${user.id}`, JSON.stringify(updatedLogs));
+      }
+
+      if (isOffline) {
+        await addToSyncQueue("delete", "habit_logs", existingLog.id, null);
+        toast.info(`Offline: Habit "${habitName}" unchecked locally.`);
+        return;
+      }
 
       try {
         const { error } = await supabase
@@ -147,7 +193,13 @@ export default function DashboardPage() {
       } catch (err) {
         console.error("Error deleting habit log:", err);
         // Revert on error
-        setHabitLogs((prev) => [...prev, existingLog]);
+        setHabitLogs((prev) => {
+          const reverted = [...prev, existingLog];
+          if (typeof window !== "undefined") {
+            localStorage.setItem(`forge_habit_logs_${user.id}`, JSON.stringify(reverted));
+          }
+          return reverted;
+        });
         toast.error("Failed to update habit log.");
       }
     } else {
@@ -159,7 +211,21 @@ export default function DashboardPage() {
         user_id: user.id,
         completed_at: new Date().toISOString(),
       };
-      setHabitLogs((prev) => [...prev, tempLog]);
+      const updatedLogs = [...habitLogs, tempLog];
+      setHabitLogs(updatedLogs);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`forge_habit_logs_${user.id}`, JSON.stringify(updatedLogs));
+      }
+
+      if (isOffline) {
+        await addToSyncQueue("insert", "habit_logs", tempId, {
+          habit_id: habitId,
+          user_id: user.id,
+          completed_at: tempLog.completed_at,
+        });
+        toast.success(`Offline: Habit "${habitName}" checked off locally!`);
+        return;
+      }
 
       try {
         const { data, error } = await supabase
@@ -173,12 +239,24 @@ export default function DashboardPage() {
 
         if (error) throw error;
         // Update with real db log object
-        setHabitLogs((prev) => prev.map((log) => (log.id === tempId ? data : log)));
+        setHabitLogs((prev) => {
+          const finalLogs = prev.map((log) => (log.id === tempId ? data : log));
+          if (typeof window !== "undefined") {
+            localStorage.setItem(`forge_habit_logs_${user.id}`, JSON.stringify(finalLogs));
+          }
+          return finalLogs;
+        });
         toast.success(`Habit "${habitName}" checked off!`);
       } catch (err) {
         console.error("Error inserting habit log:", err);
         // Revert on error
-        setHabitLogs((prev) => prev.filter((log) => log.id !== tempId));
+        setHabitLogs((prev) => {
+          const reverted = prev.filter((log) => log.id !== tempId);
+          if (typeof window !== "undefined") {
+            localStorage.setItem(`forge_habit_logs_${user.id}`, JSON.stringify(reverted));
+          }
+          return reverted;
+        });
         toast.error("Failed to complete habit.");
       }
     }
@@ -262,6 +340,9 @@ export default function DashboardPage() {
           <p className="text-[10px] text-[var(--text-muted)]">all time</p>
         </Card>
       </div>
+
+      {/* Burnout Shield */}
+      <BurnoutShieldCard />
 
       {/* Today's status */}
       <Card className="space-y-3">
