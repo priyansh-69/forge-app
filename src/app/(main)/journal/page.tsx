@@ -15,6 +15,7 @@ import {
   deleteLocalEntry, 
   addToSyncQueue 
 } from "@/lib/indexedDb";
+import { generateUUID } from "@/lib/uuid";
 
 const supabase = createClient();
 
@@ -210,7 +211,7 @@ export default function JournalPage() {
     if (!newEntry.trim() || !user) return;
     
     setSaving(true);
-    const entryId = "entry-" + Date.now();
+    const entryId = generateUUID();
 
     try {
       let finalTitle = newTitle.trim() || null;

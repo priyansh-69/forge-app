@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { useVaultStore } from "@/stores/useVaultStore";
 import { encryptText } from "@/lib/crypto";
 import { saveLocalEntry, addToSyncQueue, getLocalEntries } from "@/lib/indexedDb";
+import { generateUUID } from "@/lib/uuid";
 
 // ============================================================
 // Record Page — Daily 2-minute Audio Check-in
@@ -660,9 +661,7 @@ export default function RecordPage() {
         finalAiResponse = finalAiResponse ? await encryptText(finalAiResponse, vaultKey) : null;
       }
 
-      const entryId = typeof window !== "undefined" && window.crypto?.randomUUID 
-        ? window.crypto.randomUUID() 
-        : "entry-" + Date.now();
+      const entryId = generateUUID();
 
       const entryPayload = {
         id: entryId,
